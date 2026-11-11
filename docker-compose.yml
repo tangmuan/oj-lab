@@ -1,0 +1,22 @@
+services:
+  oj:
+    build: .
+    container_name: oj-lab
+    ports:
+      - "3001:3001"
+    volumes:
+      # SQLite 数据库与判题临时目录都在这，务必挂出来，否则重建容器数据全丢
+      - ./server/data:/app/server/data
+    environment:
+      NODE_ENV: production
+      # 生产必须改成随机长字符串，可用 `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` 生成
+      JWT_SECRET: "change-me-to-a-long-random-string"
+      JUDGE_CONCURRENCY: "2"
+      SUBMIT_COOLDOWN_SEC: "5"
+    restart: unless-stopped
+    # 判题是 CPU/内存密集型，按机器规格给个上限，避免一个死循环拖垮整机
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2g

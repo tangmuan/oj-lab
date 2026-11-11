@@ -1,0 +1,17 @@
+{
+  "name": "oj-lab",
+  "private": true,
+  "version": "1.0.0",
+  "description": "OJ Lab · 前后端分离在线判题系统",
+  "scripts": {
+    "install:all": "npm --prefix server install && npm --prefix web install",
+    "build": "npm --prefix web run build && npm --prefix server run build",
+    "seed": "npm --prefix server run seed",
+    "start": "npm --prefix server run start",
+    "dev:server": "npm --prefix server run dev",
+    "dev:web": "npm --prefix web run dev",
+    "check": "npm --prefix server run typecheck && npm --prefix web run typecheck",
+    "test:judge": "npm --prefix server exec -- node scripts/smoke.mjs",
+    "test:ui": "npm --prefix web exec -- node scripts/ui-check.mjs"
+  }
+}

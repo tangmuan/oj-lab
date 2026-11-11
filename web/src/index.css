@@ -1,0 +1,128 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-slate-50 text-slate-800 antialiased;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-slate-200 bg-white shadow-card;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium transition
+      disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn bg-brand-600 text-white hover:bg-brand-700 active:bg-brand-800;
+  }
+  .btn-ghost {
+    @apply btn border border-slate-200 bg-white text-slate-700 hover:bg-slate-50;
+  }
+  .btn-danger {
+    @apply btn border border-rose-200 bg-white text-rose-600 hover:bg-rose-50;
+  }
+  .input {
+    @apply w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none transition
+      focus:border-brand-400 focus:ring-2 focus:ring-brand-100;
+  }
+  .label {
+    @apply mb-1.5 block text-sm font-medium text-slate-600;
+  }
+  .chip {
+    @apply inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium;
+  }
+  .table-base {
+    @apply w-full border-collapse text-sm;
+  }
+  .table-base th {
+    @apply border-b border-slate-200 bg-slate-50/80 px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500;
+  }
+  .table-base td {
+    @apply border-b border-slate-100 px-4 py-3 text-slate-700;
+  }
+  .table-base tr:last-child td {
+    @apply border-b-0;
+  }
+}
+
+/* 题面 Markdown 排版 */
+.prose-oj {
+  @apply text-[15px] leading-7 text-slate-700;
+}
+.prose-oj h1,
+.prose-oj h2,
+.prose-oj h3 {
+  @apply mb-2 mt-5 font-semibold text-slate-900;
+}
+.prose-oj h1 {
+  @apply text-lg;
+}
+.prose-oj h2 {
+  @apply text-base;
+}
+.prose-oj h3 {
+  @apply text-[15px];
+}
+.prose-oj p {
+  @apply my-3;
+}
+.prose-oj ul,
+.prose-oj ol {
+  @apply my-3 list-outside space-y-1 pl-5;
+}
+.prose-oj ul {
+  @apply list-disc;
+}
+.prose-oj ol {
+  @apply list-decimal;
+}
+.prose-oj code {
+  @apply rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[13px] text-slate-800;
+}
+.prose-oj pre {
+  @apply my-3 overflow-x-auto rounded-lg bg-slate-900 p-3.5 text-[13px] leading-6 text-slate-100;
+}
+.prose-oj pre code {
+  @apply bg-transparent p-0 text-slate-100;
+}
+.prose-oj blockquote {
+  @apply my-3 border-l-4 border-slate-200 pl-3 text-slate-500;
+}
+.prose-oj table {
+  @apply my-3 w-full border-collapse text-sm;
+}
+.prose-oj th,
+.prose-oj td {
+  @apply border border-slate-200 px-2.5 py-1.5;
+}
+.prose-oj a {
+  @apply text-brand-600 underline;
+}
+
+/* CodeMirror 微调：外层容器给固定高度，这里让编辑器链式撑满 */
+.cm-theme,
+.cm-theme-light,
+.cm-theme-dark {
+  height: 100%;
+}
+.cm-editor {
+  height: 100%;
+  font-size: 13px;
+}
+.cm-editor .cm-scroller {
+  font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+  line-height: 1.6;
+}
+.cm-editor.cm-focused {
+  outline: none !important;
+}
