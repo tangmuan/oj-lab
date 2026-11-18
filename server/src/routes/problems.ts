@@ -207,7 +207,8 @@ problemsRouter.get(
     }
 
     res.json({
-      problem,
+      // checker 代码是评测逻辑，不能下发给学生（能据此构造答案），只给一个标记
+      problem: { ...problem, checker_code: undefined, checker_language: undefined, specialJudge: !!problem.checker_code },
       samples,
       stats: {
         submitCount: agg.submit_count ?? 0,

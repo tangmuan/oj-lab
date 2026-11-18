@@ -443,6 +443,14 @@ export function ProblemDetailPage() {
                 {DIFFICULTY_META[problem.difficulty].label}
               </span>
               {mine.solved && <span className="chip bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">已通过</span>}
+              {problem.specialJudge && (
+                <span
+                  className="chip bg-purple-50 text-purple-700 dark:bg-purple-500/15 dark:text-purple-300"
+                  title="本题由评测器判断答案，浮点误差等场景可能被接受"
+                >
+                  特殊评测
+                </span>
+              )}
               <button
                 onClick={toggleFavorite}
                 title={data.favorited ? '取消收藏' : '收藏这道题'}

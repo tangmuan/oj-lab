@@ -80,6 +80,9 @@ const problemSchema = z.object({
   time_limit_ms: z.coerce.number().int().min(100, '时间限制至少 100ms').max(20000).default(1000),
   memory_limit_mb: z.coerce.number().int().min(16, '内存限制至少 16MB').max(1024).default(256),
   is_public: z.coerce.number().int().min(0).max(1).default(1),
+  // 特殊评测：两个字段都为空表示走普通比对；留 nullish 便于「只改代码」或「整体关闭」
+  checker_language: z.enum(['c', 'cpp', 'java', 'python', 'node']).nullish(),
+  checker_code: z.string().max(20000, '评测器代码不能超过 20KB').nullish(),
 });
 
 function loadProblem(id: number): ProblemRow {
@@ -247,11 +250,16 @@ adminRouter.post(
       .extend({ testcases: testcaseListSchema.optional(), tags: tagListSchema.optional() })
       .parse(req.body);
 
+    // 空代码 = 关闭 SPJ，语言一并清空，避免留下孤立配置
+    const checkerCode = (data.checker_code ?? '').trim();
+    data.checker_code = checkerCode || null;
+    data.checker_language = checkerCode ? (data.checker_language ?? 'cpp') : null;
+
     const info = db.transaction(() => {
       const r = db
         .prepare(
-          `INSERT INTO problems (title, difficulty, description, input_format, output_format, hint, time_limit_ms, memory_limit_mb, is_public)
-           VALUES (@title, @difficulty, @description, @input_format, @output_format, @hint, @time_limit_ms, @memory_limit_mb, @is_public)`
+          `INSERT INTO problems (title, difficulty, description, input_format, output_format, hint, time_limit_ms, memory_limit_mb, is_public, checker_language, checker_code)
+           VALUES (@title, @difficulty, @description, @input_format, @output_format, @hint, @time_limit_ms, @memory_limit_mb, @is_public, @checker_language, @checker_code)`
         )
         .run(data);
       const pid = Number(r.lastInsertRowid);
@@ -278,6 +286,15 @@ adminRouter.put(
       .extend({ tags: tagListSchema.optional() })
       .partial()
       .parse(req.body);
+
+    // 改成空代码就等于关掉 SPJ，此时语言也必须清空
+    if (data.checker_code !== undefined) {
+      const code = (data.checker_code ?? '').trim();
+      data.checker_code = code || null;
+      if (!code) data.checker_language = null;
+      else if (data.checker_language == null) data.checker_language = 'cpp';
+    }
+
     const keys = Object.keys(data) as (keyof typeof data)[];
     // 只改标签也是合法更新；空 body 才是「没给要改什么」
     if (keys.length === 0 && tags === undefined) throw badRequest('没有需要更新的字段');

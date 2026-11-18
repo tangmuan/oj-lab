@@ -3,8 +3,8 @@ import { config } from '../config';
 import { db } from '../db';
 import { JudgeStatus, ProblemRow, SubmissionRow, TestcaseRow } from '../types';
 import { FirstDiff, firstDiff, isSameOutput, truncate } from './comparator';
-import { buildProgram, BuiltProgram, removeDir, runOnce } from './exec';
-import { LANGUAGES } from './languages';
+import { buildProgram, BuiltProgram, removeDir, runChecker, runOnce } from './exec';
+import { isLanguageId, LANGUAGES } from './languages';
 import { RunResult } from './runner';
 
 export const judgeEvents = new EventEmitter();
@@ -123,6 +123,9 @@ async function judgeOne(submissionId: number): Promise<void> {
   let maxMem = 0;
   const results: CaseResult[] = [];
   let built: BuiltProgram | null = null;
+  let checker: BuiltProgram | null = null;
+  const checkerCode = problem.checker_code?.trim() ?? '';
+  const checkerLanguage = isLanguageId(problem.checker_language) ? problem.checker_language : 'cpp';
 
   try {
     built = await buildProgram({
@@ -137,6 +140,21 @@ async function judgeOne(submissionId: number): Promise<void> {
       finalStatus = 'CE';
       compileMsg = built.compileMsg;
     } else {
+      // 特殊评测器是题目配置的一部分，编译失败属于系统错误而不是选手的问题
+      if (checkerCode) {
+        checker = await buildProgram({
+          code: checkerCode,
+          language: checkerLanguage,
+          memoryLimitMb: 512,
+          prefix: `chk-${submissionId}`,
+          warmup: false,
+        });
+        if (!checker.ok) {
+          finalStatus = 'SE';
+          compileMsg = `评测器编译失败：${checker.compileMsg ?? '未知错误'}`;
+        }
+      }
+
       const cases = db
         .prepare('SELECT * FROM testcases WHERE problem_id = ? ORDER BY ord ASC, id ASC')
         .all(problem.id) as TestcaseRow[];
@@ -155,18 +173,38 @@ async function judgeOne(submissionId: number): Promise<void> {
         });
 
         let status: JudgeStatus;
-        if (run.status !== 'OK') status = run.status;
-        else status = isSameOutput(run.stdout, tc.expected_output) ? 'AC' : 'WA';
+        let checkerMessage: string | null = null;
+        if (run.status !== 'OK') {
+          status = run.status;
+        } else if (checker) {
+          const verdict = await runChecker({
+            dir: checker.dir,
+            language: checkerLanguage,
+            sourceFile: checker.sourceFile,
+            input: tc.input,
+            output: run.stdout,
+            answer: tc.expected_output,
+            // checker 是评测逻辑，给固定宽限，不受题目时限影响
+            timeLimitMs: 10_000,
+            memoryLimitMb: 512,
+          });
+          status = verdict.ok ? 'AC' : 'WA';
+          checkerMessage = verdict.ok ? null : verdict.message;
+        } else {
+          status = isSameOutput(run.stdout, tc.expected_output) ? 'AC' : 'WA';
+        }
 
         const timeMs = Math.min(run.timeMs, 600000);
         maxTime = Math.max(maxTime, timeMs);
         maxMem = Math.max(maxMem, run.memoryKb);
 
         const isSample = tc.is_sample === 1;
-        const rawDiff = status === 'WA' ? firstDiff(run.stdout, tc.expected_output) : null;
+        const rawDiff = status === 'WA' && !checker ? firstDiff(run.stdout, tc.expected_output) : null;
         // 非样例只回位置、不回数据：否则学生能靠差异提示反推隐藏测试点内容
         const diff = rawDiff && !isSample ? { ...rawDiff, actualLine: null, expectedLine: null } : rawDiff;
-        const message = caseMessage(status, isSample, run.stdout, tc.expected_output, run, diff);
+        const message = checkerMessage
+          ? `评测器判为错误：${checkerMessage}`
+          : caseMessage(status, isSample, run.stdout, tc.expected_output, run, diff);
 
         const cr: CaseResult = {
           caseIndex: i + 1,
@@ -209,6 +247,7 @@ async function judgeOne(submissionId: number): Promise<void> {
     compileMsg = err instanceof Error ? err.message : String(err);
   } finally {
     if (built) removeDir(built.dir);
+    if (checker) removeDir(checker.dir);
   }
 
   const passCount = results.filter((r) => r.status === 'AC').length;

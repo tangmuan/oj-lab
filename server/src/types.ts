@@ -26,6 +26,9 @@ export interface ProblemRow {
   time_limit_ms: number;
   memory_limit_mb: number;
   is_public: number;
+  /** 特殊评测：为空表示走普通输出比对 */
+  checker_language: LanguageId | null;
+  checker_code: string | null;
   created_at: string;
   updated_at: string;
 }

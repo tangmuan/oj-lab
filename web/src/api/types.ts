@@ -46,6 +46,8 @@ export interface Problem {
   time_limit_ms: number;
   memory_limit_mb: number;
   is_public: number;
+  /** 是否开启了特殊评测（checker 代码本身不会下发给前端） */
+  specialJudge?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -218,6 +220,8 @@ export interface Testcase {
 export interface AdminProblem extends Problem {
   case_count: number;
   submit_count: number;
+  checker_language: LanguageId | null;
+  checker_code: string | null;
 }
 
 export interface AdminProblemDetail {

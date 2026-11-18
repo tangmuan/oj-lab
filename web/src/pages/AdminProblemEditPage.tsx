@@ -13,6 +13,9 @@ interface FormState {
   time_limit_ms: string;
   memory_limit_mb: string;
   is_public: 0 | 1;
+  /** 空串表示关闭特殊评测 */
+  checker_language: '' | 'c' | 'cpp' | 'java' | 'python' | 'node';
+  checker_code: string;
 }
 
 interface EditCase {
@@ -33,6 +36,8 @@ const EMPTY_FORM: FormState = {
   time_limit_ms: '1000',
   memory_limit_mb: '256',
   is_public: 1,
+  checker_language: '',
+  checker_code: '',
 };
 
 export function AdminProblemEditPage() {
@@ -73,6 +78,8 @@ export function AdminProblemEditPage() {
           time_limit_ms: String(p.time_limit_ms),
           memory_limit_mb: String(p.memory_limit_mb),
           is_public: p.is_public as 0 | 1,
+          checker_language: (p.checker_language ?? '') as FormState['checker_language'],
+          checker_code: p.checker_code ?? '',
         });
         setCases(
           r.testcases.map((t) => ({
@@ -128,7 +135,14 @@ export function AdminProblemEditPage() {
 
     setSaving(true);
     try {
-      const payload = { ...form, time_limit_ms: Number(form.time_limit_ms), memory_limit_mb: Number(form.memory_limit_mb) };
+      const payload = {
+        ...form,
+        time_limit_ms: Number(form.time_limit_ms),
+        memory_limit_mb: Number(form.memory_limit_mb),
+        // 后端用 null 表示「没有评测器」，空串不在语言枚举里
+        checker_language: form.checker_language || null,
+        checker_code: form.checker_code.trim() || null,
+      };
 
       if (isNew) {
         const created = await api<{ id: number }>('/admin/problems', {
@@ -284,6 +298,46 @@ export function AdminProblemEditPage() {
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="card space-y-4 p-5">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-200">特殊评测（SPJ）</h2>
+          <span className="text-xs text-slate-400 dark:text-slate-500">关闭时按行比对输出</span>
+        </div>
+
+        <div>
+          <label className="label">评测器语言</label>
+          <select
+            className="input"
+            value={form.checker_language}
+            onChange={(e) => set('checker_language', e.target.value as FormState['checker_language'])}
+          >
+            <option value="">关闭（普通输出比对）</option>
+            <option value="cpp">C++</option>
+            <option value="c">C</option>
+            <option value="python">Python 3</option>
+            <option value="node">Node.js</option>
+            <option value="java">Java</option>
+          </select>
+        </div>
+
+        {form.checker_language !== '' && (
+          <div>
+            <label className="label">评测器代码</label>
+            <textarea
+              className="input min-h-[180px] font-mono text-xs leading-6"
+              value={form.checker_code}
+              onChange={(e) => set('checker_code', e.target.value)}
+              placeholder={
+                '#include <bits/stdc++.h>\nusing namespace std;\nint main(int argc, char** argv) {\n  ifstream in(argv[1]), out(argv[2]), ans(argv[3]);\n  double a, b; out >> a; ans >> b;\n  if (fabs(a - b) <= 1e-6) { cout << "AC\\n"; return 0; }\n  cerr << "期望 " << b << "，实际 " << a << endl;\n  cout << "WA\\n";\n  return 1;\n}'
+              }
+            />
+            <p className="mt-1.5 text-xs text-slate-400 dark:text-slate-500">
+              依次从 argv 拿到 input.txt / output.txt / answer.txt；stdout 首行为 AC 或退出码 0 视为通过，stderr 会作为错因展示给学生
+            </p>
+          </div>
+        )}
       </div>
 
       <div className="card space-y-4 p-5">

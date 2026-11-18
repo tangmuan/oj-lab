@@ -21,6 +21,9 @@ CREATE TABLE IF NOT EXISTS problems (
   time_limit_ms   INTEGER NOT NULL DEFAULT 1000,
   memory_limit_mb INTEGER NOT NULL DEFAULT 256,
   is_public       INTEGER NOT NULL DEFAULT 1,
+  -- 特殊评测：checker 为空时完全走原本的输出比对路径
+  checker_language TEXT,
+  checker_code     TEXT,
   created_at      TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
