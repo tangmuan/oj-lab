@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { marked } from 'marked';
-import { api, ApiError, streamUrl } from '../api/client';
+import { api, ApiError, createStreamTicket, streamUrl } from '../api/client';
 import type {
   CaseResult,
   JudgeStatus,
@@ -248,7 +248,19 @@ export function ProblemDetailPage() {
         body: { problemId, language, code },
       });
 
-      const es = new EventSource(streamUrl(created.id));
+      // 换票失败不能把已经成功的提交报成「提交失败」，退回轮询兜底
+      let ticket: string | null = null;
+      try {
+        ticket = await createStreamTicket(created.id);
+      } catch {
+        ticket = null;
+      }
+      if (!ticket) {
+        startPolling(created.id);
+        return;
+      }
+
+      const es = new EventSource(streamUrl(created.id, ticket));
       esRef.current = es;
 
       es.onmessage = (ev) => {

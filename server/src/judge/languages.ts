@@ -95,5 +95,7 @@ export const LANGUAGES: Record<LanguageId, LanguageSpec> = {
 export const LANGUAGE_IDS = Object.keys(LANGUAGES) as LanguageId[];
 
 export function isLanguageId(v: unknown): v is LanguageId {
-  return typeof v === 'string' && v in LANGUAGES;
+  // 不能用 `v in LANGUAGES`：原型链上的 toString/constructor 也会命中，
+  // 校验通过后在 LANGUAGES[...] 取值为 undefined，直接 500
+  return typeof v === 'string' && Object.prototype.hasOwnProperty.call(LANGUAGES, v);
 }

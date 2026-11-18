@@ -29,6 +29,11 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
     res.status(400).json({ error: { code: 'INVALID_JSON', message: '请求体不是合法的 JSON' } });
     return;
   }
+  // body-parser 超限抛的是 413 语义的普通 Error，不处理会变成「服务器内部错误」
+  if (typeof err === 'object' && err !== null && (err as { type?: string }).type === 'entity.too.large') {
+    res.status(413).json({ error: { code: 'PAYLOAD_TOO_LARGE', message: '请求体过大' } });
+    return;
+  }
   if (err instanceof AppError) {
     res.status(err.status).json({ error: { code: err.code, message: err.message } });
     return;

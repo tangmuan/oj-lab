@@ -4,9 +4,10 @@ import { config } from '../config';
 import { db } from '../db';
 import { enqueueSubmission, judgeEvents } from '../judge';
 import { isLanguageId } from '../judge/languages';
-import { optionalAuth, requireAuth } from '../middleware/auth';
+import { authenticateStream, optionalAuth, requireAuth } from '../middleware/auth';
 import { ProblemRow, SubmissionCaseRow, SubmissionRow } from '../types';
-import { ah, AppError, forbidden, notFound } from '../utils/errors';
+import { ah, AppError, forbidden, notFound, unauthorized } from '../utils/errors';
+import { issueStreamTicket } from '../utils/streamTickets';
 
 export const submissionsRouter = Router();
 
@@ -133,50 +134,103 @@ submissionsRouter.get(
   })
 );
 
-submissionsRouter.get('/:id/stream', requireAuth, (req, res) => {
-  const id = Number(req.params.id);
-  const sub = db.prepare('SELECT * FROM submissions WHERE id = ?').get(id) as SubmissionRow | undefined;
-  if (!sub) {
-    res.status(404).json({ error: { code: 'NOT_FOUND', message: '提交记录不存在' } });
-    return;
-  }
-  if (sub.user_id !== req.user!.id && req.user!.role !== 'admin') {
-    res.status(403).json({ error: { code: 'FORBIDDEN', message: '无权查看该提交' } });
-    return;
-  }
+/**
+ * 换取 SSE 入场券：把 JWT 从 URL 上挪走，避免长期凭证落进浏览器历史、
+ * 反向代理访问日志和 Referer。票据 60 秒有效且只能用一次。
+ */
+submissionsRouter.post(
+  '/:id/stream-ticket',
+  requireAuth,
+  ah(async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) throw notFound('提交记录不存在');
 
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream; charset=utf-8',
-    'Cache-Control': 'no-cache, no-transform',
-    Connection: 'keep-alive',
-    'X-Accel-Buffering': 'no',
-  });
+    const sub = db.prepare('SELECT user_id FROM submissions WHERE id = ?').get(id) as
+      | Pick<SubmissionRow, 'user_id'>
+      | undefined;
+    if (!sub) throw notFound('提交记录不存在');
+    if (sub.user_id !== req.user!.id && req.user!.role !== 'admin') throw forbidden('无权查看该提交');
 
-  const send = (payload: unknown) => res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    res.json({ ticket: issueStreamTicket(req.user!.id, id), expiresIn: 60 });
+  })
+);
 
-  const cases = db
-    .prepare('SELECT case_index, status, time_ms, memory_kb, is_sample, message FROM submission_cases WHERE submission_id = ? ORDER BY case_index ASC')
-    .all(id) as Pick<SubmissionCaseRow, 'case_index' | 'status' | 'time_ms' | 'memory_kb' | 'is_sample' | 'message'>[];
+submissionsRouter.get(
+  '/:id/stream',
+  ah(async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) throw notFound('提交记录不存在');
 
-  send({ type: 'snapshot', submissionId: id, status: sub.status, cases });
+    const user = authenticateStream(req, id);
+    if (!user) throw unauthorized('判题数据连接已失效，请重新提交后再试');
 
-  if (sub.status === 'AC' || !['PENDING', 'JUDGING'].includes(sub.status)) {
-    send({ type: 'done', submissionId: id, status: sub.status });
-    res.end();
-    return;
-  }
+    const sub = db.prepare('SELECT * FROM submissions WHERE id = ?').get(id) as SubmissionRow | undefined;
+    if (!sub) throw notFound('提交记录不存在');
+    if (sub.user_id !== user.id && user.role !== 'admin') throw forbidden('无权查看该提交');
 
-  const listener = (payload: unknown) => send(payload);
-  judgeEvents.on(`sub:${id}`, listener);
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
 
-  const heartbeat = setInterval(() => res.write(': ping\n\n'), 15000);
+    let closed = false;
+    let heartbeat: NodeJS.Timeout | null = null;
 
-  req.on('close', () => {
-    clearInterval(heartbeat);
-    judgeEvents.off(`sub:${id}`, listener);
-    res.end();
-  });
-});
+    // 收尾必须只做一次：done 主动结束时与客户端断开时都会走到这里
+    const cleanup = (): void => {
+      if (heartbeat) {
+        clearInterval(heartbeat);
+        heartbeat = null;
+      }
+      judgeEvents.off(`sub:${id}`, listener);
+    };
+
+    const finish = (): void => {
+      if (closed) return;
+      closed = true;
+      cleanup();
+      if (!res.writableEnded) res.end();
+    };
+
+    const send = (payload: unknown): void => {
+      if (closed || res.writableEnded) return;
+      res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    };
+
+    const listener = (payload: unknown): void => {
+      if (closed) return;
+      send(payload);
+      // 判题已收尾，服务端主动断流，客户端不必再等心跳或依赖自己 close
+      if ((payload as { type?: string }).type === 'done') finish();
+    };
+
+    const cases = db
+      .prepare(
+        'SELECT case_index, status, time_ms, memory_kb, is_sample, message FROM submission_cases WHERE submission_id = ? ORDER BY case_index ASC'
+      )
+      .all(id) as Pick<SubmissionCaseRow, 'case_index' | 'status' | 'time_ms' | 'memory_kb' | 'is_sample' | 'message'>[];
+
+    send({ type: 'snapshot', submissionId: id, status: sub.status, cases });
+
+    if (!['PENDING', 'JUDGING'].includes(sub.status)) {
+      send({ type: 'done', submissionId: id, status: sub.status });
+      finish();
+      return;
+    }
+
+    judgeEvents.on(`sub:${id}`, listener);
+    heartbeat = setInterval(() => {
+      if (!closed && !res.writableEnded) res.write(': ping\n\n');
+    }, 15000);
+
+    res.on('close', () => {
+      closed = true;
+      cleanup();
+    });
+  })
+);
 
 /** 撤销权限检查用，保持 403 语义一致 */
 export function assertOwner(sub: SubmissionRow, userId: number, role: string): void {

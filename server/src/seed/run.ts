@@ -153,23 +153,37 @@ function main() {
       created += 1;
     }
 
-    let demoCreated = false;
-    const demo = db.prepare('SELECT id FROM users WHERE username = ?').get('demo');
-    if (!demo) {
-      db.prepare('INSERT INTO users (username, password_hash, role) VALUES (?,?,?)').run(
-        'demo',
-        bcrypt.hashSync('demo123', 10),
-        'user'
-      );
-      demoCreated = true;
+    // 账号必须显式建出来：注册接口的「首个用户成为管理员」只在空库生效，
+    // 先 seed 会让 demo 占住首位，全新部署就再也没有管理员入口。
+    const seedAccounts: Array<{ username: string; password: string; role: 'user' | 'admin' }> = [
+      { username: 'admin', password: 'admin123', role: 'admin' },
+      { username: 'demo', password: 'demo123', role: 'user' },
+    ];
+    const accountResults: Array<{ username: string; role: string; created: boolean }> = [];
+    for (const account of seedAccounts) {
+      const exists = db.prepare('SELECT id FROM users WHERE username = ?').get(account.username);
+      if (!exists) {
+        db.prepare('INSERT INTO users (username, password_hash, role) VALUES (?,?,?)').run(
+          account.username,
+          bcrypt.hashSync(account.password, 10),
+          account.role
+        );
+      }
+      accountResults.push({ username: account.username, role: account.role, created: !exists });
     }
 
-    return { created, updated, demoCreated };
+    // 已有部署可能只有 demo：补一个管理员，避免升级后仍然进不了后台
+    const adminCount = (db.prepare("SELECT COUNT(*) AS c FROM users WHERE role = 'admin'").get() as { c: number }).c;
+
+    return { created, updated, accountResults, adminCount };
   });
 
   console.log(`[seed] 清理冒烟题目：${removedSmoke} 条`);
   console.log(`[seed] 新增题目：${result.created} 道，刷新题面：${result.updated} 道`);
-  console.log(`[seed] 演示账号 demo/demo123：${result.demoCreated ? '已创建' : '已存在'}`);
+  for (const a of result.accountResults) {
+    console.log(`[seed] 账号 ${a.username}（${a.role}）：${a.created ? '已创建' : '已存在，未改动'}`);
+  }
+  console.log(`[seed] 管理员账号总数：${result.adminCount}`);
   const count = (db.prepare('SELECT COUNT(*) AS c FROM problems').get() as { c: number }).c;
   console.log(`[seed] 当前题库总量：${count} 道`);
 }

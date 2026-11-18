@@ -14,7 +14,7 @@
 # 1) 后端（端口 3001）
 cd server
 npm install
-npm run seed        # 建表 + 5 道示例题 + demo 账号
+npm run seed        # 建表 + 5 道示例题 + admin/demo 账号（幂等）
 npm run dev         # tsx watch 热重载
 
 # 2) 前端（端口 5173，/api 已代理到 3001）
@@ -32,7 +32,9 @@ npm run dev
 | admin | admin123 | 管理员 |
 | demo | demo123 | 普通用户 |
 
-> 首个注册的账号会自动成为管理员；也可以用 `admin` 登录后在管理端改任意用户角色。
+> `npm run seed` 会以「不存在才插入」的方式补齐 `admin`（角色 admin），因此先 seed 再注册也不会出现「没有管理员」的死局；已有库缺管理员时重跑 seed 即可补上，日志会打印每个账号是新建还是已存在。
+>
+> 空库时首个注册的账号仍会自动成为管理员；登录 admin 后也可以在管理端改任意用户角色。
 
 ## 生产部署（单端口）
 
@@ -102,17 +104,17 @@ npm run start         # 默认 0.0.0.0:3001，启动日志会打印局域网地�
 
 ## 功能清单
 
-- 认证：注册 / 登录 / JWT 续期校验，角色以数据库为准（防旧 token 越权）
-- 题目：列表（搜索、难度筛选、通过率、个人解题状态）、详情（Markdown 题面 + 样例 + 提示）
+- 认证：注册 / 登录 / JWT 续期校验；token 只用来确认身份，**角色一律回查数据库**（普通请求与匿名可选鉴权都如此），管理员被降权后旧 token 立即失效
+- 题目：列表（搜索、难度筛选、通过率、个人解题状态）、详情（Markdown 题面 + 样例 + 提示）；未公开题目仅管理员可见
 - 提交：CodeMirror 编辑器、5 种语言模板、草稿存本地、提交冷却
 - **自测运行**：自定义标准输入 → 运行 → 右侧看程序输出（含 stderr、退出码、耗时、内存），不入提交记录、不影响通过率；`Ctrl+Enter` 运行、`Ctrl+Shift+Enter` 提交；可一键填充题面样例
 - **草稿箱**：自建任意语言的代码文件，输入即自动保存（700ms 防抖）、关页面/换浏览器再打开仍是原样；支持新建/重命名/切换语言/删除/搜索，可直接运行调试；题目页可一键「存草稿」把当前代码带进草稿箱
 - **自定义语言模板**：每种语言可保存一份自己的初始模板，之后新建该语言文件自动套用；支持「填入当前文件」快速把已写好的代码结构存为模板、一键恢复系统默认
-- 判题结果：SSE 实时逐点结果（前端断线自动降级轮询），编译错误输出、样例差异提示
+- 判题结果：SSE 实时逐点结果（前端断线自动降级轮询），编译错误输出、样例差异提示；推送完成后服务端主动断流，并用 60 秒一次性 ticket 代替 URL 上的长期 token
 - 历史：我的提交列表（按状态筛选）、提交详情（代码只对本人/管理员可见）
 - 排名：通过题数榜（同分看提交次数）、通过率、最近提交时间
 - 管理端：题目 CRUD、测试点增删改（样例标记）、可见性、提交列表、任意提交重判、用户角色调整
-- 安全：Zod 入参校验、密码 bcrypt、参数化 SQL、管理端接口双重鉴权、代码长度/输出体积上限
+- 安全：Zod 入参校验、密码 bcrypt、参数化 SQL、管理端接口双重鉴权、代码长度/输出体积上限、测试点提交总量上限 8MB
 
 ## 目录结构
 
@@ -124,8 +126,9 @@ server/
     db/               SQLite 连接与 schema.sql
     routes/           auth / problems / submissions / stats / admin
     judge/            languages（语言配置）/ runner（沙箱）/ comparator / index（队列与流程）
-    seed/run.ts       示例题与演示账号
+    seed/run.ts       示例题与账号（admin / demo，均幂等）
   scripts/smoke.mjs   判题端到端冒烟（建题 → 5 语言提交 → 校验状态）
+  tests/              纯函数单测（node:test）
   judge-include/      C++ 万能头 shim（见下方说明）
 web/
   src/
@@ -134,17 +137,23 @@ web/
     components/       Layout / StatusBadge / CodeEditor / ResultPanel / SelfTestPanel / TemplateModal / ProtectedRoute
     pages/            列表 / 详情 / 草稿箱 / 提交 / 排名 / 管理端
   scripts/ui-check.mjs 用本机 Edge 跑一遍真实交互并截图
+  tests/              前端格式化函数单测（node:test + tsx）
+.github/workflows/ci.yml  两端类型检查 + 单测
 ```
 
 ## 验证方式
 
 ```bash
+npm run check                            # 两端 tsc --noEmit（CI 必跑）
+npm run test:unit                        # 纯函数单测：输出比对 / Java 类名 / 前端格式化
 cd server && node scripts/smoke.mjs      # 9 项断言：5 语言 AC + WA + TLE + CE + RE
 cd web && node scripts/ui-check.mjs      # 登录→自测运行→提交→结果面板截图，收集控制台/HTTP 错误
 cd web && node scripts/ui-drafts.mjs     # 草稿箱：新建→自动保存→刷新恢复→即时刷新兜底→运行→删除
 cd web && node scripts/ui-templates.mjs  # 自定义模板：保存模板→新建文件自动套用→恢复默认
 cd web && node scripts/ui-problem-template.mjs  # 题目页套用自定义模板 / 自己代码优先保留
 ```
+
+单元测试用 `node:test`，不引入测试框架；`ui-*.mjs` 依赖的 `playwright-core` 已在 `web/devDependencies` 中锁定版本，`npm ci` 后可直接运行。CI（`.github/workflows/ci.yml`）依次执行两端 `npm ci` → `tsc --noEmit` → 单测。
 
 ## API 速览
 
@@ -157,7 +166,9 @@ GET|PUT|DELETE /api/files/:id       # 打开 / 保存 / 删除
 GET  /api/templates                 # 我的自定义语言模板
 PUT|DELETE /api/templates/:language # 保存 / 恢复系统默认
 POST /api/submissions               GET /api/submissions?mine=1&problemId=&status=
-GET  /api/submissions/:id           GET /api/submissions/:id/stream   (SSE)
+GET  /api/submissions/:id
+POST /api/submissions/:id/stream-ticket   # 换 60 秒一次性 SSE 票据
+GET  /api/submissions/:id/stream?ticket=  # SSE（也兼容 Authorization 头）
 GET  /api/stats/overview            GET /api/stats/leaderboard
 GET  /api/stats/problems/:id
 管理端（需 admin）
@@ -188,7 +199,8 @@ GET  /api/admin/users               PATCH /api/admin/users/:id/role
 3. **判题在 API 进程内。** 提交量上来会拖慢接口，生产应把 judge 拆成独立进程/服务，队列换成 Redis/BullMQ。
 4. **C++ 万能头 shim。** 本机 MinGW 8.1 的 `<bits/stdc++.h>` 会引入残缺的 `<filesystem>`，C++17 下必然编译失败；`judge-include/bits/stdc++.h` 提供了跳过 `<filesystem>` 的等价头，判题时用 `-I` 优先命中。换用 GCC 9+ 后可直接删掉该目录。
 5. **题面 HTML 未做 sanitize。** 题面仅管理员可写，若开放给普通用户出题，需要接入 DOMPurify。
-6. **JWT 存 localStorage。** 简单直接，但存在 XSS 窃取风险；更高安全要求应改用 httpOnly Cookie + CSRF token。
+6. **JWT 存 localStorage。** 简单直接，但存在 XSS 窃取风险；更高安全要求应改用 httpOnly Cookie + CSRF token。SSE 已经不再把 JWT 放 URL，改用 60 秒一次性 ticket。
+7. **SSE ticket 存在进程内存。** 单实例部署没问题；若将来多副本负载均衡，票据需要放到 Redis 等共享存储，否则换票与建连可能落到不同进程。
 
 ## 后续可做
 
@@ -196,4 +208,4 @@ GET  /api/admin/users               PATCH /api/admin/users/:id/role
 - 特殊评测（SPJ）、交互题、多文件提交
 - 题目标签与题单、收藏
 - judge 服务化 + Docker 沙箱、判题机水平扩容
-- 单元测试（当前以真实提交的端到端冒烟替代）
+- 单元测试扩展到判题流程与路由层（当前覆盖纯函数 + 端到端冒烟）

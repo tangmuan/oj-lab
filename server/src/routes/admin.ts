@@ -4,7 +4,7 @@ import { db } from '../db';
 import { enqueueSubmission } from '../judge';
 import { requireAdmin, requireAuth } from '../middleware/auth';
 import { ProblemRow, TestcaseRow } from '../types';
-import { ah, notFound } from '../utils/errors';
+import { ah, badRequest, notFound } from '../utils/errors';
 
 export const adminRouter = Router();
 
@@ -16,6 +16,25 @@ const testcaseSchema = z.object({
   is_sample: z.coerce.number().int().min(0).max(1).default(0),
   ord: z.coerce.number().int().min(0).default(0),
 });
+
+/**
+ * 传输层给管理端放宽到 16MB，业务上限仍卡 8MB：
+ * 60 个测试点各 200KB 字符，中文按 UTF-8 三字节算会远超 8MB，
+ * 所以用字符级上限兜住业务语义，传输层略高一点以便返回可读的 400 而不是光秃秃的 413。
+ */
+const MAX_TESTCASES_BYTES = 8 * 1024 * 1024;
+
+const testcaseListSchema = z
+  .array(testcaseSchema)
+  .max(60, '测试点最多 60 个')
+  .refine(
+    (list) =>
+      list.reduce(
+        (sum, tc) => sum + Buffer.byteLength(tc.input, 'utf8') + Buffer.byteLength(tc.expected_output, 'utf8'),
+        0
+      ) <= MAX_TESTCASES_BYTES,
+    '测试点合计体积不能超过 8MB'
+  );
 
 const problemSchema = z.object({
   title: z.string().trim().min(1, '标题不能为空').max(120, '标题过长'),
@@ -190,7 +209,9 @@ adminRouter.get(
 adminRouter.post(
   '/problems',
   ah(async (req, res) => {
-    const { testcases, ...data } = problemSchema.extend({ testcases: z.array(testcaseSchema).max(60).optional() }).parse(req.body);
+    const { testcases, ...data } = problemSchema
+      .extend({ testcases: testcaseListSchema.optional() })
+      .parse(req.body);
 
     const info = db.transaction(() => {
       const r = db
@@ -220,7 +241,8 @@ adminRouter.put(
     loadProblem(id);
     const data = problemSchema.partial().parse(req.body);
     const keys = Object.keys(data) as (keyof typeof data)[];
-    if (keys.length === 0) throw notFound('没有需要更新的字段');
+    // 空 body 是「没给要改什么」，属于请求错误，不是资源不存在
+    if (keys.length === 0) throw badRequest('没有需要更新的字段');
 
     const setSql = keys.map((k) => `${k} = ?`).join(', ');
     db.prepare(`UPDATE problems SET ${setSql}, updated_at = datetime('now') WHERE id = ?`).run(

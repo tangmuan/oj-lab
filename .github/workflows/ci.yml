@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            server/package-lock.json
+            web/package-lock.json
+
+      - name: 安装后端依赖
+        run: npm ci
+        working-directory: server
+
+      - name: 安装前端依赖
+        run: npm ci
+        working-directory: web
+
+      - name: 后端类型检查
+        run: npx tsc --noEmit
+        working-directory: server
+
+      - name: 前端类型检查
+        run: npx tsc --noEmit
+        working-directory: web
+
+      - name: 后端单元测试
+        run: npm test
+        working-directory: server
+
+      - name: 前端单元测试
+        run: npm test
+        working-directory: web

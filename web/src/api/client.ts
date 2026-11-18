@@ -67,7 +67,18 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
   return data as T;
 }
 
-/** SSE 地址（EventSource 无法自定义请求头，token 走 query） */
-export function streamUrl(submissionId: number): string {
-  return `/api/submissions/${submissionId}/stream?token=${encodeURIComponent(getToken() || '')}`;
+/**
+ * 用一次性票据替代 URL 上的长期 token：票据 60 秒有效、只能用一次，
+ * 即使泄漏到日志或浏览器历史也无法复用。
+ */
+export async function createStreamTicket(submissionId: number): Promise<string> {
+  const r = await api<{ ticket: string; expiresIn: number }>(`/submissions/${submissionId}/stream-ticket`, {
+    method: 'POST',
+  });
+  return r.ticket;
+}
+
+/** SSE 地址（EventSource 无法自定义请求头，只能把一次性票据放 query） */
+export function streamUrl(submissionId: number, ticket: string): string {
+  return `/api/submissions/${submissionId}/stream?ticket=${encodeURIComponent(ticket)}`;
 }

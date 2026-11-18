@@ -19,7 +19,15 @@ export function createApp() {
   const app = express();
 
   app.use(cors({ origin: config.corsOrigin, credentials: true }));
-  app.use(express.json({ limit: '1mb' }));
+
+  // 管理端一次可能提交 60 个测试点，需要更大的包体；其余接口保持 1MB，
+  // 避免匿名请求拿大 body 换进程内存
+  const jsonDefault = express.json({ limit: '1mb' });
+  const jsonAdmin = express.json({ limit: '16mb' });
+  app.use((req, res, next) => {
+    if (req.path.startsWith('/api/admin')) return next();
+    return jsonDefault(req, res, next);
+  });
 
   app.get('/api/health', (_req, res) => {
     res.json({ ok: true, service: 'oj-server', time: new Date().toISOString(), judge: queueStats() });
@@ -38,7 +46,7 @@ export function createApp() {
   app.use('/api/run', runRouter);
   app.use('/api/files', filesRouter);
   app.use('/api/templates', templatesRouter);
-  app.use('/api/admin', adminRouter);
+  app.use('/api/admin', jsonAdmin, adminRouter);
 
   // 生产模式：若前端已构建（web/dist 存在），由后端一并托管，实现单端口同源部署
   const indexHtml = path.join(config.webDist, 'index.html');
