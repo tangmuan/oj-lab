@@ -43,9 +43,9 @@ export function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen bg-slate-50">
+    <div className="flex min-h-screen bg-slate-50 dark:bg-slate-800/50">
       {/* 左侧品牌区 */}
-      <div className="relative hidden w-1/2 flex-col justify-between overflow-hidden bg-slate-900 p-12 text-white lg:flex">
+      <div className="relative hidden w-1/2 flex-col justify-between overflow-hidden bg-slate-900 dark:bg-slate-950 p-12 text-white lg:flex">
         <div className="absolute -right-24 -top-24 h-72 w-72 rounded-full bg-brand-600/30 blur-3xl" />
         <div className="absolute -bottom-32 -left-16 h-80 w-80 rounded-full bg-emerald-500/20 blur-3xl" />
         <Link to="/" className="relative flex items-center gap-2.5">
@@ -69,7 +69,7 @@ export function LoginPage() {
             ))}
           </div>
         </div>
-        <p className="relative text-xs text-slate-400">本地沙箱判题 · 仅供学习与内部使用</p>
+        <p className="relative text-xs text-slate-400 dark:text-slate-500">本地沙箱判题 · 仅供学习与内部使用</p>
       </div>
 
       {/* 右侧表单 */}
@@ -78,14 +78,14 @@ export function LoginPage() {
           <div className="mb-8 lg:hidden">
             <Link to="/" className="flex items-center gap-2.5">
               <span className="grid h-9 w-9 place-items-center rounded-lg bg-brand-600 text-sm font-bold text-white">OJ</span>
-              <span className="text-lg font-semibold tracking-tight text-slate-900">OJ Lab</span>
+              <span className="text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-100">OJ Lab</span>
             </Link>
           </div>
 
-          <h2 className="text-2xl font-semibold tracking-tight text-slate-900">
+          <h2 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
             {mode === 'login' ? '登录账号' : '创建账号'}
           </h2>
-          <p className="mt-1.5 text-sm text-slate-500">
+          <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-400">
             {mode === 'login' ? '登录后即可提交代码、查看判题结果' : '首个注册的账号自动成为管理员'}
           </p>
 
@@ -144,7 +144,7 @@ export function LoginPage() {
             </button>
           </form>
 
-          <p className="mt-5 text-center text-sm text-slate-500">
+          <p className="mt-5 text-center text-sm text-slate-500 dark:text-slate-400">
             {mode === 'login' ? '还没有账号？' : '已有账号？'}
             <button
               className="ml-1 font-medium text-brand-600 hover:text-brand-700"
@@ -157,8 +157,8 @@ export function LoginPage() {
             </button>
           </p>
 
-          <div className="mt-8 rounded-lg border border-slate-200 bg-white px-4 py-3 text-xs leading-5 text-slate-500">
-            演示账号：<span className="font-mono text-slate-700">admin / admin123</span>（管理员）
+          <div className="mt-8 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3 text-xs leading-5 text-slate-500 dark:text-slate-400">
+            演示账号：<span className="font-mono text-slate-700 dark:text-slate-300">admin / admin123</span>（管理员）
           </div>
         </div>
       </div>

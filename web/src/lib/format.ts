@@ -1,22 +1,62 @@
 import type { Difficulty, JudgeStatus, RunStatus } from '../api/types';
 
 export const STATUS_META: Record<JudgeStatus, { label: string; className: string; dot: string }> = {
-  PENDING: { label: '等待中', className: 'bg-slate-100 text-slate-600', dot: 'bg-slate-400' },
-  JUDGING: { label: '判题中', className: 'bg-brand-50 text-brand-700', dot: 'bg-brand-500 animate-pulse' },
-  AC: { label: '通过', className: 'bg-emerald-50 text-emerald-700', dot: 'bg-emerald-500' },
-  WA: { label: '答案错误', className: 'bg-rose-50 text-rose-700', dot: 'bg-rose-500' },
-  TLE: { label: '运行超时', className: 'bg-amber-50 text-amber-700', dot: 'bg-amber-500' },
-  MLE: { label: '超出内存', className: 'bg-purple-50 text-purple-700', dot: 'bg-purple-500' },
-  RE: { label: '运行错误', className: 'bg-red-50 text-red-700', dot: 'bg-red-500' },
-  CE: { label: '编译错误', className: 'bg-slate-100 text-slate-600', dot: 'bg-slate-500' },
-  OLE: { label: '输出超限', className: 'bg-amber-50 text-amber-700', dot: 'bg-amber-500' },
-  SE: { label: '系统错误', className: 'bg-slate-100 text-slate-600', dot: 'bg-slate-500' },
+  PENDING: {
+    label: '等待中',
+    className: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
+    dot: 'bg-slate-400',
+  },
+  JUDGING: {
+    label: '判题中',
+    className: 'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-300',
+    dot: 'bg-brand-500 animate-pulse',
+  },
+  AC: {
+    label: '通过',
+    className: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300',
+    dot: 'bg-emerald-500',
+  },
+  WA: {
+    label: '答案错误',
+    className: 'bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300',
+    dot: 'bg-rose-500',
+  },
+  TLE: {
+    label: '运行超时',
+    className: 'bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300',
+    dot: 'bg-amber-500',
+  },
+  MLE: {
+    label: '超出内存',
+    className: 'bg-purple-50 text-purple-700 dark:bg-purple-500/15 dark:text-purple-300',
+    dot: 'bg-purple-500',
+  },
+  RE: {
+    label: '运行错误',
+    className: 'bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-300',
+    dot: 'bg-red-500',
+  },
+  CE: {
+    label: '编译错误',
+    className: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
+    dot: 'bg-slate-500',
+  },
+  OLE: {
+    label: '输出超限',
+    className: 'bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300',
+    dot: 'bg-amber-500',
+  },
+  SE: {
+    label: '系统错误',
+    className: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
+    dot: 'bg-slate-500',
+  },
 };
 
 export const DIFFICULTY_META: Record<Difficulty, { label: string; className: string }> = {
-  easy: { label: '简单', className: 'bg-emerald-50 text-emerald-700' },
-  medium: { label: '中等', className: 'bg-amber-50 text-amber-700' },
-  hard: { label: '困难', className: 'bg-rose-50 text-rose-700' },
+  easy: { label: '简单', className: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300' },
+  medium: { label: '中等', className: 'bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300' },
+  hard: { label: '困难', className: 'bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300' },
 };
 
 export const STATUS_ORDER: JudgeStatus[] = ['AC', 'WA', 'TLE', 'MLE', 'RE', 'CE', 'OLE', 'SE', 'JUDGING', 'PENDING'];

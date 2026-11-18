@@ -1,25 +1,74 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { db } from '../db';
-import { optionalAuth } from '../middleware/auth';
+import { optionalAuth, requireAuth } from '../middleware/auth';
 import { ProblemRow, TestcaseRow } from '../types';
-import { ah, notFound } from '../utils/errors';
+import { ah, notFound, unauthorized } from '../utils/errors';
 
 export const problemsRouter = Router();
 
 const listQuery = z.object({
   keyword: z.string().trim().max(50).optional(),
   difficulty: z.enum(['easy', 'medium', 'hard']).optional(),
+  tag: z.string().trim().max(30).optional(),
+  /** 1 = 只看我收藏的，需要登录 */
+  favorite: z.coerce.number().int().min(0).max(1).default(0),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
 });
+
+type ProblemListRow = Pick<
+  ProblemRow,
+  'id' | 'title' | 'difficulty' | 'time_limit_ms' | 'memory_limit_mb' | 'is_public' | 'created_at'
+> & {
+  submit_count: number;
+  ac_count: number;
+  case_count: number;
+  tag_names: string;
+  favorited: number;
+};
+
+/** tag_names 来自 json_group_array，理论上永远是合法 JSON；坏数据不该让整个列表 500 */
+function parseTags(raw: string): string[] {
+  try {
+    const value = JSON.parse(raw) as unknown;
+    return Array.isArray(value) ? value.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 列表统计不再用「每行三个相关子查询」，改成三张预聚合派生表 JOIN 一次；
+ * 每个派生表按 problem_id 唯一，不会像直接 JOIN 明细表那样把计数放大。
+ */
+const LIST_FROM = `
+  FROM problems p
+  LEFT JOIN (
+    SELECT problem_id, COUNT(*) AS submit_count, SUM(CASE WHEN status = 'AC' THEN 1 ELSE 0 END) AS ac_count
+    FROM submissions GROUP BY problem_id
+  ) agg ON agg.problem_id = p.id
+  LEFT JOIN (
+    SELECT problem_id, COUNT(*) AS case_count FROM testcases GROUP BY problem_id
+  ) tc ON tc.problem_id = p.id
+  LEFT JOIN (
+    SELECT pt.problem_id, json_group_array(tg.name) AS tag_names
+    FROM problem_tags pt JOIN tags tg ON tg.id = pt.tag_id
+    GROUP BY pt.problem_id
+  ) tagagg ON tagagg.problem_id = p.id
+  LEFT JOIN favorites fav ON fav.problem_id = p.id AND fav.user_id = ?
+`;
 
 problemsRouter.get(
   '/',
   optionalAuth,
   ah(async (req, res) => {
-    const { keyword, difficulty, page, pageSize } = listQuery.parse(req.query);
+    const { keyword, difficulty, tag, favorite, page, pageSize } = listQuery.parse(req.query);
     const isAdmin = req.user?.role === 'admin';
+    // 未登录时用 -1 做 JOIN 条件，永远不会命中任何收藏
+    const viewerId = req.user?.id ?? -1;
+
+    if (favorite === 1 && !req.user) throw unauthorized('登录后才能查看收藏');
 
     const where: string[] = [];
     const params: unknown[] = [];
@@ -32,37 +81,48 @@ problemsRouter.get(
       where.push('p.difficulty = ?');
       params.push(difficulty);
     }
+    if (tag) {
+      where.push(
+        'EXISTS (SELECT 1 FROM problem_tags pt2 JOIN tags tg2 ON tg2.id = pt2.tag_id WHERE pt2.problem_id = p.id AND tg2.name = ?)'
+      );
+      params.push(tag);
+    }
+    if (favorite === 1) where.push('fav.user_id IS NOT NULL');
+
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
-    const total = (db.prepare(`SELECT COUNT(*) AS c FROM problems p ${whereSql}`).get(...(params as never[])) as { c: number }).c;
+    const total = (
+      db
+        .prepare(
+          `SELECT COUNT(*) AS c FROM problems p LEFT JOIN favorites fav ON fav.problem_id = p.id AND fav.user_id = ? ${whereSql}`
+        )
+        .get(viewerId, ...(params as never[])) as { c: number }
+    ).c;
 
-    const items = db
+    const rows = db
       .prepare(
         `SELECT p.id, p.title, p.difficulty, p.time_limit_ms, p.memory_limit_mb, p.is_public, p.created_at,
-                (SELECT COUNT(*) FROM submissions s WHERE s.problem_id = p.id) AS submit_count,
-                (SELECT COUNT(*) FROM submissions s WHERE s.problem_id = p.id AND s.status = 'AC') AS ac_count,
-                (SELECT COUNT(*) FROM testcases t WHERE t.problem_id = p.id) AS case_count
-         FROM problems p ${whereSql}
+                COALESCE(agg.submit_count, 0) AS submit_count,
+                COALESCE(agg.ac_count, 0) AS ac_count,
+                COALESCE(tc.case_count, 0) AS case_count,
+                COALESCE(tagagg.tag_names, '[]') AS tag_names,
+                CASE WHEN fav.user_id IS NULL THEN 0 ELSE 1 END AS favorited
+         ${LIST_FROM}
+         ${whereSql}
          ORDER BY p.id ASC
          LIMIT ? OFFSET ?`
       )
-      .all(...(params as never[]), pageSize, (page - 1) * pageSize) as Array<
-      Pick<ProblemRow, 'id' | 'title' | 'difficulty' | 'time_limit_ms' | 'memory_limit_mb' | 'is_public'> & {
-        submit_count: number;
-        ac_count: number;
-        case_count: number;
-      }
-    >;
+      .all(viewerId, ...(params as never[]), pageSize, (page - 1) * pageSize) as ProblemListRow[];
 
     // 当前用户在列表中的解题状态
     const statusMap: Record<number, { tried: boolean; solved: boolean }> = {};
-    if (req.user && items.length > 0) {
-      const ids = items.map((i) => i.id);
+    if (req.user && rows.length > 0) {
+      const ids = rows.map((r) => r.id);
       const placeholders = ids.map(() => '?').join(',');
-      const rows = db
+      const solved = db
         .prepare(`SELECT problem_id, status FROM submissions WHERE user_id = ? AND problem_id IN (${placeholders})`)
         .all(req.user.id, ...(ids as never[])) as { problem_id: number; status: string }[];
-      for (const r of rows) {
+      for (const r of solved) {
         const cur = statusMap[r.problem_id] ?? { tried: false, solved: false };
         cur.tried = true;
         if (r.status === 'AC') cur.solved = true;
@@ -71,16 +131,34 @@ problemsRouter.get(
     }
 
     res.json({
-      items: items.map((i) => ({
-        ...i,
-        ac_rate: i.submit_count > 0 ? Math.round((i.ac_count / i.submit_count) * 1000) / 10 : null,
-        my_status: statusMap[i.id] ?? { tried: false, solved: false },
+      items: rows.map((r) => ({
+        ...r,
+        tags: parseTags(r.tag_names),
+        favorited: r.favorited === 1,
+        ac_rate: r.submit_count > 0 ? Math.round((r.ac_count / r.submit_count) * 1000) / 10 : null,
+        my_status: statusMap[r.id] ?? { tried: false, solved: false },
       })),
       page,
       pageSize,
       total,
       totalPages: Math.max(1, Math.ceil(total / pageSize)),
     });
+  })
+);
+
+/** 标签云：必须放在 /:id 之前，否则 tags 会被当成题目 id */
+problemsRouter.get(
+  '/tags',
+  ah(async (_req, res) => {
+    const items = db
+      .prepare(
+        `SELECT tg.name, COUNT(pt.problem_id) AS count
+         FROM tags tg LEFT JOIN problem_tags pt ON pt.tag_id = tg.id
+         GROUP BY tg.id
+         ORDER BY count DESC, tg.name ASC`
+      )
+      .all();
+    res.json({ items });
   })
 );
 
@@ -108,6 +186,14 @@ problemsRouter.get(
       )
       .get(id) as { submit_count: number; ac_count: number; solved_users: number };
 
+    const tags = db
+      .prepare('SELECT tg.name FROM tags tg JOIN problem_tags pt ON pt.tag_id = tg.id WHERE pt.problem_id = ? ORDER BY tg.name ASC')
+      .all(id) as { name: string }[];
+
+    const favorited = req.user
+      ? !!db.prepare('SELECT 1 AS hit FROM favorites WHERE user_id = ? AND problem_id = ?').get(req.user.id, id)
+      : false;
+
     let mine = { submitCount: 0, lastStatus: null as string | null, solved: false };
     if (req.user) {
       const rows = db
@@ -130,6 +216,34 @@ problemsRouter.get(
         acRate: agg.submit_count ? Math.round(((agg.ac_count ?? 0) / agg.submit_count) * 1000) / 10 : null,
       },
       mine,
+      tags: tags.map((t) => t.name),
+      favorited,
     });
+  })
+);
+
+problemsRouter.post(
+  '/:id/favorite',
+  requireAuth,
+  ah(async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) throw notFound('题目不存在');
+    const exists = db.prepare('SELECT id FROM problems WHERE id = ?').get(id);
+    if (!exists) throw notFound('题目不存在');
+
+    db.prepare('INSERT OR IGNORE INTO favorites (user_id, problem_id) VALUES (?, ?)').run(req.user!.id, id);
+    res.json({ favorited: true });
+  })
+);
+
+problemsRouter.delete(
+  '/:id/favorite',
+  requireAuth,
+  ah(async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) throw notFound('题目不存在');
+
+    db.prepare('DELETE FROM favorites WHERE user_id = ? AND problem_id = ?').run(req.user!.id, id);
+    res.json({ favorited: false });
   })
 );

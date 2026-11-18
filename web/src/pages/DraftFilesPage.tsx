@@ -370,8 +370,8 @@ export function DraftFilesPage() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight text-slate-900">草稿箱</h1>
-          <p className="mt-1 text-sm text-slate-500">在这里自建任意语言的代码文件，边写边自动保存，关掉浏览器再打开还是原样</p>
+          <h1 className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">草稿箱</h1>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">在这里自建任意语言的代码文件，边写边自动保存，关掉浏览器再打开还是原样</p>
         </div>
         <div className="flex items-center gap-2">
           <button className="btn-ghost !py-1.5 text-xs" onClick={() => setTemplateOpen(true)} title="设置各语言的初始模板">
@@ -400,13 +400,13 @@ export function DraftFilesPage() {
       <div className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
         {/* 文件列表 */}
         <aside className="card flex max-h-[calc(100vh-12rem)] flex-col overflow-hidden">
-          <div className="border-b border-slate-200 p-2.5">
+          <div className="border-b border-slate-200 dark:border-slate-700 p-2.5">
             <input className="input !py-1.5 text-xs" placeholder="搜索文件名" value={keyword} onChange={(e) => setKeyword(e.target.value)} />
           </div>
           <div className="flex-1 overflow-y-auto">
-            {listLoading && <p className="p-4 text-center text-xs text-slate-400">加载中…</p>}
+            {listLoading && <p className="p-4 text-center text-xs text-slate-400 dark:text-slate-500">加载中…</p>}
             {!listLoading && filtered.length === 0 && (
-              <p className="p-6 text-center text-xs leading-5 text-slate-400">
+              <p className="p-6 text-center text-xs leading-5 text-slate-400 dark:text-slate-500">
                 {items.length === 0 ? '还没有文件\n点右上角「新建文件」开始' : '没有匹配的文件'}
               </p>
             )}
@@ -421,12 +421,12 @@ export function DraftFilesPage() {
                   >
                     <div className="flex items-center gap-1.5">
                       <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${active?.id === f.id ? 'bg-brand-500' : 'bg-slate-300'}`} />
-                      <span className={`truncate text-sm ${active?.id === f.id ? 'font-medium text-brand-700' : 'text-slate-700'}`}>
+                      <span className={`truncate text-sm ${active?.id === f.id ? 'font-medium text-brand-700' : 'text-slate-700 dark:text-slate-300'}`}>
                         {f.title}
                       </span>
                     </div>
-                    <div className="mt-0.5 flex items-center gap-1.5 pl-3 text-[11px] text-slate-400">
-                      <span className="rounded bg-slate-100 px-1 text-slate-500">{LANGUAGE_LABEL[f.language]}</span>
+                    <div className="mt-0.5 flex items-center gap-1.5 pl-3 text-[11px] text-slate-400 dark:text-slate-500">
+                      <span className="rounded bg-slate-100 dark:bg-slate-800 px-1 text-slate-500 dark:text-slate-400">{LANGUAGE_LABEL[f.language]}</span>
                       <span>{f.char_count} 字</span>
                       <span className="ml-auto">{formatDateTime(f.updated_at).slice(5, 16)}</span>
                     </div>
@@ -435,18 +435,18 @@ export function DraftFilesPage() {
               ))}
             </ul>
           </div>
-          <div className="border-t border-slate-200 px-3 py-2 text-[11px] text-slate-400">共 {items.length} 个文件 · 已存服务端</div>
+          <div className="border-t border-slate-200 dark:border-slate-700 px-3 py-2 text-[11px] text-slate-400 dark:text-slate-500">共 {items.length} 个文件 · 已存服务端</div>
         </aside>
 
         {/* 编辑器 */}
         <section className="space-y-4">
-          {fileLoading && <div className="card p-10 text-center text-sm text-slate-400">打开中…</div>}
+          {fileLoading && <div className="card p-10 text-center text-sm text-slate-400 dark:text-slate-500">打开中…</div>}
 
           {!fileLoading && !active && (
             <div className="card grid place-items-center p-16 text-center">
               <div>
-                <p className="text-sm font-medium text-slate-700">草稿箱是空的</p>
-                <p className="mt-1 text-xs text-slate-400">新建一个文件，随便写点什么，它会自动保存</p>
+                <p className="text-sm font-medium text-slate-700 dark:text-slate-300">草稿箱是空的</p>
+                <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">新建一个文件，随便写点什么，它会自动保存</p>
                 <button className="btn-primary mt-4 !py-1.5 text-xs" onClick={createFile}>
                   + 新建文件
                 </button>
@@ -477,8 +477,8 @@ export function DraftFilesPage() {
                   </select>
 
                   <span className="min-w-[5.5rem] text-xs">
-                    {saveState === 'pending' && <span className="text-slate-400">未保存…</span>}
-                    {saveState === 'saving' && <span className="text-slate-400">保存中…</span>}
+                    {saveState === 'pending' && <span className="text-slate-400 dark:text-slate-500">未保存…</span>}
+                    {saveState === 'saving' && <span className="text-slate-400 dark:text-slate-500">保存中…</span>}
                     {saveState === 'saved' && <span className="text-emerald-600">已保存 {lastSavedAt}</span>}
                     {saveState === 'error' && (
                       <button className="text-rose-600 underline" onClick={() => void flushSave()}>
@@ -505,7 +505,7 @@ export function DraftFilesPage() {
                 />
 
                 {active.problem_id && (
-                  <p className="mt-2 text-xs text-slate-400">
+                  <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
                     关联题目：
                     <Link to={`/problems/${active.problem_id}`} className="text-brand-600 hover:text-brand-700">
                       #{active.problem_id}

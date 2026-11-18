@@ -105,7 +105,12 @@ npm run start         # 默认 0.0.0.0:3001，启动日志会打印局域网地�
 ## 功能清单
 
 - 认证：注册 / 登录 / JWT 续期校验；token 只用来确认身份，**角色一律回查数据库**（普通请求与匿名可选鉴权都如此），管理员被降权后旧 token 立即失效
-- 题目：列表（搜索、难度筛选、通过率、个人解题状态）、详情（Markdown 题面 + 样例 + 提示）；未公开题目仅管理员可见
+- 题目：列表（搜索、难度筛选、标签筛选、收藏筛选、通过率、个人解题状态）、详情（Markdown 题面 + 样例 + 提示 + 标签）；未公开题目仅管理员可见
+- **错因定位**：WA 时给出「第 X 行第 Y 列起不同」，样例额外展示期望/实际那一行；隐藏测试点只回行列、不回数据，避免反推测试内容
+- **提交演进**：提交详情页可「与上次提交对比」，逐行 diff 高亮增删（手写 LCS，零依赖）；只能对比自己的提交，管理员可对比任意两条（后端校验）
+- **标签与收藏**：标签自由文本（trim + 去重 + 上限 10 个），列表按标签筛选；题目可收藏，支持「只看收藏」
+- **个人主页** `/u/:id`：解题数 / 提交数 / 通过率 / 状态分布 + 最近 26 周提交热力图 + 最近提交
+- **深色模式**：顶栏一键切换，主题存 localStorage，首次跟随系统；CodeMirror 跟随切换
 - 提交：CodeMirror 编辑器、5 种语言模板、草稿存本地、提交冷却
 - **自测运行**：自定义标准输入 → 运行 → 右侧看程序输出（含 stderr、退出码、耗时、内存），不入提交记录、不影响通过率；`Ctrl+Enter` 运行、`Ctrl+Shift+Enter` 提交；可一键填充题面样例
 - **草稿箱**：自建任意语言的代码文件，输入即自动保存（700ms 防抖）、关页面/换浏览器再打开仍是原样；支持新建/重命名/切换语言/删除/搜索，可直接运行调试；题目页可一键「存草稿」把当前代码带进草稿箱
@@ -113,7 +118,7 @@ npm run start         # 默认 0.0.0.0:3001，启动日志会打印局域网地�
 - 判题结果：SSE 实时逐点结果（前端断线自动降级轮询），编译错误输出、样例差异提示；推送完成后服务端主动断流，并用 60 秒一次性 ticket 代替 URL 上的长期 token
 - 历史：我的提交列表（按状态筛选）、提交详情（代码只对本人/管理员可见）
 - 排名：通过题数榜（同分看提交次数）、通过率、最近提交时间
-- 管理端：题目 CRUD、测试点增删改（样例标记）、可见性、提交列表、任意提交重判、用户角色调整
+- 管理端：题目 CRUD、标签编辑、测试点增删改（样例标记）、可见性、提交列表、任意提交重判、用户角色调整
 - 安全：Zod 入参校验、密码 bcrypt、参数化 SQL、管理端接口双重鉴权、代码长度/输出体积上限、测试点提交总量上限 8MB
 
 ## 目录结构
@@ -133,11 +138,13 @@ server/
 web/
   src/
     api/              fetch 封装与类型
-    context/          AuthContext
-    components/       Layout / StatusBadge / CodeEditor / ResultPanel / SelfTestPanel / TemplateModal / ProtectedRoute
-    pages/            列表 / 详情 / 草稿箱 / 提交 / 排名 / 管理端
+    context/          AuthContext / ThemeContext（深浅色）
+    components/       Layout / StatusBadge / CodeEditor / CodeDiffView / SubmissionHeatmap / ResultPanel / SelfTestPanel / TemplateModal / ProtectedRoute
+    pages/            列表 / 详情 / 草稿箱 / 提交 / 排名 / 个人主页 / 管理端
+    lib/              format（状态与格式化）/ templates / diff（逐行 LCS）
   scripts/ui-check.mjs 用本机 Edge 跑一遍真实交互并截图
-  tests/              前端格式化函数单测（node:test + tsx）
+  scripts/ui-dark.mjs  逐页浅色/深色截图并校验深色生效
+  tests/              前端格式化与 diff 单测（node:test + tsx）
 .github/workflows/ci.yml  两端类型检查 + 单测
 ```
 
@@ -151,6 +158,7 @@ cd web && node scripts/ui-check.mjs      # 登录→自测运行→提交→结�
 cd web && node scripts/ui-drafts.mjs     # 草稿箱：新建→自动保存→刷新恢复→即时刷新兜底→运行→删除
 cd web && node scripts/ui-templates.mjs  # 自定义模板：保存模板→新建文件自动套用→恢复默认
 cd web && node scripts/ui-problem-template.mjs  # 题目页套用自定义模板 / 自己代码优先保留
+cd web && node scripts/ui-dark.mjs       # 逐页浅色/深色截图，校验深色生效且无控制台/HTTP 错误
 ```
 
 单元测试用 `node:test`，不引入测试框架；`ui-*.mjs` 依赖的 `playwright-core` 已在 `web/devDependencies` 中锁定版本，`npm ci` 后可直接运行。CI（`.github/workflows/ci.yml`）依次执行两端 `npm ci` → `tsc --noEmit` → 单测。
@@ -167,10 +175,13 @@ GET  /api/templates                 # 我的自定义语言模板
 PUT|DELETE /api/templates/:language # 保存 / 恢复系统默认
 POST /api/submissions               GET /api/submissions?mine=1&problemId=&status=
 GET  /api/submissions/:id
+GET  /api/submissions?userId=&beforeId=   # 提交对比定位相邻记录（userId 仅本人或管理员）
 POST /api/submissions/:id/stream-ticket   # 换 60 秒一次性 SSE 票据
 GET  /api/submissions/:id/stream?ticket=  # SSE（也兼容 Authorization 头）
+GET  /api/problems/tags             # 标签云（含每标签题目数）
+POST|DELETE /api/problems/:id/favorite    # 收藏 / 取消收藏
 GET  /api/stats/overview            GET /api/stats/leaderboard
-GET  /api/stats/problems/:id
+GET  /api/stats/problems/:id        GET /api/stats/users/:id   # 个人主页（含 26 周热力图数据）
 管理端（需 admin）
 GET|POST /api/admin/problems        GET|PUT|DELETE /api/admin/problems/:id
 GET|POST /api/admin/problems/:id/testcases
@@ -201,11 +212,13 @@ GET  /api/admin/users               PATCH /api/admin/users/:id/role
 5. **题面 HTML 未做 sanitize。** 题面仅管理员可写，若开放给普通用户出题，需要接入 DOMPurify。
 6. **JWT 存 localStorage。** 简单直接，但存在 XSS 窃取风险；更高安全要求应改用 httpOnly Cookie + CSRF token。SSE 已经不再把 JWT 放 URL，改用 60 秒一次性 ticket。
 7. **SSE ticket 存在进程内存。** 单实例部署没问题；若将来多副本负载均衡，票据需要放到 Redis 等共享存储，否则换票与建连可能落到不同进程。
+8. **热力图按 UTC 日期聚合。** 与 `created_at` 的存储口径一致；北京时间凌晨 0–8 点的提交会算到前一天。
+9. **代码 diff 有规模上限。** 单侧超过 1500 行时降级成「整段删除 + 整段新增」，不再做 LCS（DP 表太占内存），行号仍然正确。
 
 ## 后续可做
 
 - 比赛模式（限时、封榜、实时排名）
 - 特殊评测（SPJ）、交互题、多文件提交
-- 题目标签与题单、收藏
+- 题单（把标签组合成学习路径）
 - judge 服务化 + Docker 沙箱、判题机水平扩容
 - 单元测试扩展到判题流程与路由层（当前覆盖纯函数 + 端到端冒烟）

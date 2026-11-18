@@ -16,6 +16,8 @@ interface SeedProblem {
   hint?: string;
   time_limit_ms?: number;
   memory_limit_mb?: number;
+  /** 仅在该题还没有任何标签时写入，避免覆盖后台的人工编辑 */
+  tags: string[];
   cases: SeedCase[];
 }
 
@@ -28,6 +30,7 @@ const PROBLEMS: SeedProblem[] = [
     input_format: '一行两个整数 `a b`，用空格分隔，满足 `-10^9 ≤ a, b ≤ 10^9`。',
     output_format: '一行一个整数，表示 `a + b`。',
     hint: '注意数据范围：两个 10^9 相加会超过 32 位有符号整数上限，C/C++ 请使用 `long long`。',
+    tags: ['入门', '数学'],
     cases: [
       { input: '1 2\n', expected_output: '3\n', is_sample: true },
       { input: '100 -50\n', expected_output: '50\n', is_sample: true },
@@ -43,6 +46,7 @@ const PROBLEMS: SeedProblem[] = [
       '给定一个长度为 `n` 的整数序列，求所有元素之和。\n\n本题主要练习「先读个数、再循环读入」的输入模式。',
     input_format: '第一行一个整数 `n`（`1 ≤ n ≤ 100000`）。\n\n第二行 `n` 个整数 `a_i`（`-10^9 ≤ a_i ≤ 10^9`）。',
     output_format: '一行一个整数，表示序列元素之和。',
+    tags: ['数组', '入门'],
     cases: [
       { input: '5\n1 2 3 4 5\n', expected_output: '15\n', is_sample: true },
       { input: '3\n-1 -1 -1\n', expected_output: '-3\n', is_sample: true },
@@ -58,6 +62,7 @@ const PROBLEMS: SeedProblem[] = [
     input_format: '一行一个整数 `n`（`1 ≤ n ≤ 90`）。',
     output_format: '一行一个整数，表示 `F(n)`。',
     hint: '`F(90)` 已经超过 32 位整数范围，需要用 `long long` / `long`。',
+    tags: ['动态规划', '数学'],
     cases: [
       { input: '1\n', expected_output: '1\n', is_sample: true },
       { input: '10\n', expected_output: '55\n', is_sample: true },
@@ -74,6 +79,7 @@ const PROBLEMS: SeedProblem[] = [
     input_format: '第一行一个整数 `n`（`1 ≤ n ≤ 200000`）。\n\n第二行 `n` 个整数 `a_i`（`-10^9 ≤ a_i ≤ 10^9`）。',
     output_format: '一行 `n` 个整数，为升序排列的结果，相邻数字之间用一个空格分隔。',
     hint: '输出末尾多一个空格通常不影响判定，但建议按格式输出。',
+    tags: ['排序', '数组'],
     time_limit_ms: 2000,
     cases: [
       { input: '5\n3 1 4 1 5\n', expected_output: '1 1 3 4 5\n', is_sample: true },
@@ -91,6 +97,7 @@ const PROBLEMS: SeedProblem[] = [
     input_format: '第一行一个整数 `n`（`1 ≤ n ≤ 200000`）。\n\n第二行 `n` 个整数 `a_i`（`-10^9 ≤ a_i ≤ 10^9`）。',
     output_format: '一行一个整数，表示最大子段和。',
     hint: '经典 Kadane 算法：维护「以当前位置结尾的最大和」，整体 `O(n)`。全部为负数时答案是最大的那个负数。',
+    tags: ['动态规划', '数组'],
     time_limit_ms: 1000,
     cases: [
       { input: '9\n-2 1 -3 4 -1 2 1 -5 4\n', expected_output: '6\n', is_sample: true },
@@ -118,6 +125,24 @@ function main() {
       'INSERT INTO testcases (problem_id, input, expected_output, is_sample, ord) VALUES (?,?,?,?,?)'
     );
 
+    const upsertTag = db.prepare('INSERT OR IGNORE INTO tags (name) VALUES (?)');
+    const findTag = db.prepare('SELECT id FROM tags WHERE name = ?');
+    const countProblemTags = db.prepare('SELECT COUNT(*) AS c FROM problem_tags WHERE problem_id = ?');
+    const clearProblemTags = db.prepare('DELETE FROM problem_tags WHERE problem_id = ?');
+    const linkTag = db.prepare('INSERT OR IGNORE INTO problem_tags (problem_id, tag_id) VALUES (?, ?)');
+
+    /** 只在题目还没有标签时写入种子标签：管理员手工配过的标签优先 */
+    const seedTagsIfEmpty = (problemId: number, names: string[]): void => {
+      const count = (countProblemTags.get(problemId) as { c: number }).c;
+      if (count > 0 || names.length === 0) return;
+      clearProblemTags.run(problemId);
+      for (const name of names) {
+        upsertTag.run(name);
+        const row = findTag.get(name) as { id: number } | undefined;
+        if (row) linkTag.run(problemId, row.id);
+      }
+    };
+
     for (const p of PROBLEMS) {
       const exists = db.prepare('SELECT id FROM problems WHERE title = ?').get(p.title) as { id: number } | undefined;
       if (exists) {
@@ -135,6 +160,7 @@ function main() {
           p.memory_limit_mb ?? 256,
           exists.id
         );
+        seedTagsIfEmpty(exists.id, p.tags);
         updated += 1;
         continue;
       }
@@ -150,6 +176,7 @@ function main() {
       );
       const pid = Number(info.lastInsertRowid);
       p.cases.forEach((c, i) => insertCase.run(pid, c.input.replace(/\\n/g, '\n'), c.expected_output.replace(/\\n/g, '\n'), c.is_sample ? 1 : 0, i + 1));
+      seedTagsIfEmpty(pid, p.tags);
       created += 1;
     }
 

@@ -9,14 +9,14 @@
     height: 100%;
   }
   body {
-    @apply bg-slate-50 text-slate-800 antialiased;
+    @apply bg-slate-50 text-slate-800 antialiased dark:bg-slate-950 dark:text-slate-200;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   }
 }
 
 @layer components {
   .card {
-    @apply rounded-xl border border-slate-200 bg-white shadow-card;
+    @apply rounded-xl border border-slate-200 bg-white shadow-card dark:border-slate-800 dark:bg-slate-900;
   }
   .btn {
     @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium transition
@@ -26,17 +26,21 @@
     @apply btn bg-brand-600 text-white hover:bg-brand-700 active:bg-brand-800;
   }
   .btn-ghost {
-    @apply btn border border-slate-200 bg-white text-slate-700 hover:bg-slate-50;
+    @apply btn border border-slate-200 bg-white text-slate-700 hover:bg-slate-50
+      dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800;
   }
   .btn-danger {
-    @apply btn border border-rose-200 bg-white text-rose-600 hover:bg-rose-50;
+    @apply btn border border-rose-200 bg-white text-rose-600 hover:bg-rose-50
+      dark:border-rose-500/30 dark:bg-slate-900 dark:text-rose-400 dark:hover:bg-rose-500/10;
   }
   .input {
     @apply w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none transition
-      focus:border-brand-400 focus:ring-2 focus:ring-brand-100;
+      focus:border-brand-400 focus:ring-2 focus:ring-brand-100
+      dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:placeholder:text-slate-500
+      dark:focus:border-brand-500 dark:focus:ring-brand-500/20;
   }
   .label {
-    @apply mb-1.5 block text-sm font-medium text-slate-600;
+    @apply mb-1.5 block text-sm font-medium text-slate-600 dark:text-slate-300;
   }
   .chip {
     @apply inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium;
@@ -45,10 +49,11 @@
     @apply w-full border-collapse text-sm;
   }
   .table-base th {
-    @apply border-b border-slate-200 bg-slate-50/80 px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500;
+    @apply border-b border-slate-200 bg-slate-50/80 px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500
+      dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400;
   }
   .table-base td {
-    @apply border-b border-slate-100 px-4 py-3 text-slate-700;
+    @apply border-b border-slate-100 px-4 py-3 text-slate-700 dark:border-slate-800 dark:text-slate-300;
   }
   .table-base tr:last-child td {
     @apply border-b-0;
@@ -57,12 +62,12 @@
 
 /* 题面 Markdown 排版 */
 .prose-oj {
-  @apply text-[15px] leading-7 text-slate-700;
+  @apply text-[15px] leading-7 text-slate-700 dark:text-slate-300;
 }
 .prose-oj h1,
 .prose-oj h2,
 .prose-oj h3 {
-  @apply mb-2 mt-5 font-semibold text-slate-900;
+  @apply mb-2 mt-5 font-semibold text-slate-900 dark:text-slate-100;
 }
 .prose-oj h1 {
   @apply text-lg;
@@ -87,26 +92,28 @@
   @apply list-decimal;
 }
 .prose-oj code {
-  @apply rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[13px] text-slate-800;
+  @apply rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[13px] text-slate-800
+    dark:bg-slate-800 dark:text-slate-200;
 }
 .prose-oj pre {
-  @apply my-3 overflow-x-auto rounded-lg bg-slate-900 p-3.5 text-[13px] leading-6 text-slate-100;
+  @apply my-3 overflow-x-auto rounded-lg bg-slate-900 p-3.5 text-[13px] leading-6 text-slate-100
+    dark:border dark:border-slate-800 dark:bg-slate-950;
 }
 .prose-oj pre code {
   @apply bg-transparent p-0 text-slate-100;
 }
 .prose-oj blockquote {
-  @apply my-3 border-l-4 border-slate-200 pl-3 text-slate-500;
+  @apply my-3 border-l-4 border-slate-200 pl-3 text-slate-500 dark:border-slate-700 dark:text-slate-400;
 }
 .prose-oj table {
   @apply my-3 w-full border-collapse text-sm;
 }
 .prose-oj th,
 .prose-oj td {
-  @apply border border-slate-200 px-2.5 py-1.5;
+  @apply border border-slate-200 px-2.5 py-1.5 dark:border-slate-700;
 }
 .prose-oj a {
-  @apply text-brand-600 underline;
+  @apply text-brand-600 underline dark:text-brand-400;
 }
 
 /* CodeMirror 微调：外层容器给固定高度，这里让编辑器链式撑满 */

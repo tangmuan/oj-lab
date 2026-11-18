@@ -82,10 +82,10 @@ export function TemplateModal({ open, languages, custom, initialLanguage, active
         role="dialog"
         aria-modal="true"
       >
-        <div className="flex items-center gap-3 border-b border-slate-200 px-5 py-3.5">
-          <h2 className="text-sm font-semibold text-slate-900">自定义语言模板</h2>
-          <span className="text-xs text-slate-400">新建文件时自动套用</span>
-          <button className="ml-auto text-slate-400 hover:text-slate-600" onClick={onClose} aria-label="关闭">
+        <div className="flex items-center gap-3 border-b border-slate-200 dark:border-slate-700 px-5 py-3.5">
+          <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">自定义语言模板</h2>
+          <span className="text-xs text-slate-400 dark:text-slate-500">新建文件时自动套用</span>
+          <button className="ml-auto text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300" onClick={onClose} aria-label="关闭">
             ✕
           </button>
         </div>
@@ -104,7 +104,7 @@ export function TemplateModal({ open, languages, custom, initialLanguage, active
                 </option>
               ))}
             </select>
-            <span className={`chip ${isCustom ? 'bg-brand-50 text-brand-700' : 'bg-slate-100 text-slate-500'}`}>
+            <span className={`chip ${isCustom ? 'bg-brand-50 text-brand-700' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'}`}>
               {isCustom ? '使用自定义模板' : '使用系统默认模板'}
             </span>
             {activeFile && (
@@ -120,7 +120,7 @@ export function TemplateModal({ open, languages, custom, initialLanguage, active
 
           <CodeEditor value={content} language={language} onChange={setContent} height="300px" />
 
-          <p className="text-[11px] leading-5 text-slate-400">
+          <p className="text-[11px] leading-5 text-slate-400 dark:text-slate-500">
             模板只影响「新建文件」的初始内容，不会改动已有文件；每个账号每种语言各自保存一份。
           </p>
 
@@ -128,7 +128,7 @@ export function TemplateModal({ open, languages, custom, initialLanguage, active
           {tip && <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">{tip}</p>}
         </div>
 
-        <div className="flex items-center justify-end gap-2 border-t border-slate-200 bg-slate-50/60 px-5 py-3">
+        <div className="flex items-center justify-end gap-2 border-t border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/40 px-5 py-3">
           <button className="btn-ghost !py-1.5 text-xs" onClick={resetDefault} disabled={saving}>
             {isCustom ? '恢复系统默认' : '重置为默认内容'}
           </button>

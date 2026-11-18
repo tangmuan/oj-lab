@@ -2,7 +2,7 @@ import { EventEmitter } from 'events';
 import { config } from '../config';
 import { db } from '../db';
 import { JudgeStatus, ProblemRow, SubmissionRow, TestcaseRow } from '../types';
-import { isSameOutput, truncate } from './comparator';
+import { FirstDiff, firstDiff, isSameOutput, truncate } from './comparator';
 import { buildProgram, BuiltProgram, removeDir, runOnce } from './exec';
 import { LANGUAGES } from './languages';
 import { RunResult } from './runner';
@@ -17,6 +17,8 @@ export interface CaseResult {
   memoryKb: number;
   isSample: boolean;
   message: string | null;
+  /** 仅 WA 有值；旧数据没有该字段，前端需要按「可能缺失」处理 */
+  firstDiff: FirstDiff | null;
 }
 
 const queue: number[] = [];
@@ -65,14 +67,23 @@ function updateSubmission(id: number, patch: Partial<SubmissionRow>): void {
   db.prepare(`UPDATE submissions SET ${setSql} WHERE id = ?`).run(...entries.map(([, v]) => v as never), id);
 }
 
-function caseMessage(status: JudgeStatus, isSample: boolean, actual: string, expected: string, run: RunResult): string | null {
+function caseMessage(
+  status: JudgeStatus,
+  isSample: boolean,
+  actual: string,
+  expected: string,
+  run: RunResult,
+  diff: FirstDiff | null
+): string | null {
   switch (status) {
     case 'AC':
       return null;
-    case 'WA':
-      return isSample
-        ? `答案错误 · 期望「${truncate(expected, 120)}」，实际「${truncate(actual, 120)}」`
-        : '答案错误';
+    case 'WA': {
+      const where = diff ? `第 ${diff.line} 行第 ${diff.column} 列` : '';
+      // 非样例不泄露期望输出，只给位置
+      if (!isSample) return where ? `答案错误 · ${where}起不同` : '答案错误';
+      return `答案错误 · ${where ? `${where}起不同：` : ''}期望「${truncate(expected, 120)}」，实际「${truncate(actual, 120)}」`;
+    }
     case 'TLE':
       return '超出时间限制';
     case 'MLE':
@@ -152,9 +163,20 @@ async function judgeOne(submissionId: number): Promise<void> {
         maxMem = Math.max(maxMem, run.memoryKb);
 
         const isSample = tc.is_sample === 1;
-        const message = caseMessage(status, isSample, run.stdout, tc.expected_output, run);
+        const rawDiff = status === 'WA' ? firstDiff(run.stdout, tc.expected_output) : null;
+        // 非样例只回位置、不回数据：否则学生能靠差异提示反推隐藏测试点内容
+        const diff = rawDiff && !isSample ? { ...rawDiff, actualLine: null, expectedLine: null } : rawDiff;
+        const message = caseMessage(status, isSample, run.stdout, tc.expected_output, run, diff);
 
-        const cr: CaseResult = { caseIndex: i + 1, status, timeMs, memoryKb: run.memoryKb, isSample, message };
+        const cr: CaseResult = {
+          caseIndex: i + 1,
+          status,
+          timeMs,
+          memoryKb: run.memoryKb,
+          isSample,
+          message,
+          firstDiff: diff,
+        };
         results.push(cr);
 
         db.prepare(
@@ -171,6 +193,7 @@ async function judgeOne(submissionId: number): Promise<void> {
             memory_kb: cr.memoryKb,
             is_sample: tc.is_sample,
             message: cr.message,
+            first_diff: cr.firstDiff,
           },
         });
 

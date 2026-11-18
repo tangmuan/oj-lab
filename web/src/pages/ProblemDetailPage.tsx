@@ -371,6 +371,22 @@ export function ProblemDetailPage() {
     }
   }
 
+  /** 收藏 / 取消收藏：只在本地合并状态，不整页刷新 */
+  async function toggleFavorite() {
+    if (!user) {
+      navigate('/login', { state: { from: location.pathname } });
+      return;
+    }
+    try {
+      const r = await api<{ favorited: boolean }>(`/problems/${problemId}/favorite`, {
+        method: data?.favorited ? 'DELETE' : 'POST',
+      });
+      setData((prev) => (prev ? { ...prev, favorited: r.favorited } : prev));
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : '收藏操作失败');
+    }
+  }
+
   // Ctrl/Cmd + Enter 运行，加 Shift 提交  actionsRef.current = { run: () => void runSelfTest(), submit: () => void handleSubmit() };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -392,7 +408,7 @@ export function ProblemDetailPage() {
   if (error) {
     return (
       <div className="card mx-auto mt-16 max-w-md p-8 text-center">
-        <h2 className="text-lg font-semibold text-slate-900">{error}</h2>
+        <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">{error}</h2>
         <Link to="/" className="btn-ghost mt-5 inline-flex">
           返回题目列表
         </Link>
@@ -401,50 +417,71 @@ export function ProblemDetailPage() {
   }
 
   if (!data) {
-    return <div className="py-24 text-center text-sm text-slate-400">题目加载中…</div>;
+    return <div className="py-24 text-center text-sm text-slate-400 dark:text-slate-500">题目加载中…</div>;
   }
 
   const { problem, samples, stats, mine } = data;
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2 text-xs text-slate-400">
-        <Link to="/" className="hover:text-slate-600">
+      <div className="flex items-center gap-2 text-xs text-slate-400 dark:text-slate-500">
+        <Link to="/" className="hover:text-slate-600 dark:hover:text-slate-300">
           题目列表
         </Link>
         <span>/</span>
-        <span className="text-slate-500">{problem.title}</span>
+        <span className="text-slate-500 dark:text-slate-400">{problem.title}</span>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
         {/* 左：题面 */}
         <div className="card overflow-hidden">
-          <div className="border-b border-slate-200 px-5 py-4">
+          <div className="border-b border-slate-200 dark:border-slate-700 px-5 py-4">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="font-mono text-xs text-slate-400">#{String(problem.id).padStart(4, '0')}</span>
-              <h1 className="text-lg font-semibold tracking-tight text-slate-900">{problem.title}</h1>
+              <span className="font-mono text-xs text-slate-400 dark:text-slate-500">#{String(problem.id).padStart(4, '0')}</span>
+              <h1 className="text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-100">{problem.title}</h1>
               <span className={`chip ${DIFFICULTY_META[problem.difficulty].className}`}>
                 {DIFFICULTY_META[problem.difficulty].label}
               </span>
-              {mine.solved && <span className="chip bg-emerald-50 text-emerald-700">已通过</span>}
+              {mine.solved && <span className="chip bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">已通过</span>}
+              <button
+                onClick={toggleFavorite}
+                title={data.favorited ? '取消收藏' : '收藏这道题'}
+                className={`chip ml-auto transition ${
+                  data.favorited
+                    ? 'bg-amber-50 text-amber-700 hover:bg-amber-100 dark:bg-amber-500/15 dark:text-amber-300'
+                    : 'bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700'
+                }`}
+              >
+                {data.favorited ? '★ 已收藏' : '☆ 收藏'}
+              </button>
             </div>
-            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+
+            {data.tags.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1">
+                {data.tags.map((t) => (
+                  <span key={t} className="chip bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                    {t}
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
               <span>
-                时间限制 <b className="font-mono text-slate-700">{formatTimeLimit(problem.time_limit_ms)}</b>
+                时间限制 <b className="font-mono text-slate-700 dark:text-slate-300">{formatTimeLimit(problem.time_limit_ms)}</b>
               </span>
               <span>
-                内存限制 <b className="font-mono text-slate-700">{problem.memory_limit_mb} MB</b>
+                内存限制 <b className="font-mono text-slate-700 dark:text-slate-300">{problem.memory_limit_mb} MB</b>
               </span>
               <span>
                 通过率{' '}
-                <b className="font-mono text-slate-700">{stats.acRate === null ? '—' : `${stats.acRate}%`}</b>
-                <span className="ml-1 text-slate-400">
+                <b className="font-mono text-slate-700 dark:text-slate-300">{stats.acRate === null ? '—' : `${stats.acRate}%`}</b>
+                <span className="ml-1 text-slate-400 dark:text-slate-500">
                   ({stats.acCount}/{stats.submitCount})
                 </span>
               </span>
               {user && (
                 <span>
-                  我的提交 <b className="text-slate-700">{mine.submitCount}</b>
+                  我的提交 <b className="text-slate-700 dark:text-slate-300">{mine.submitCount}</b>
                 </span>
               )}
             </div>
@@ -455,32 +492,32 @@ export function ProblemDetailPage() {
 
             {problem.input_format && (
               <section className="mt-5">
-                <h3 className="text-sm font-semibold text-slate-900">输入格式</h3>
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">输入格式</h3>
                 <div className="prose-oj mt-1" dangerouslySetInnerHTML={{ __html: marked.parse(problem.input_format, { async: false }) as string }} />
               </section>
             )}
             {problem.output_format && (
               <section className="mt-4">
-                <h3 className="text-sm font-semibold text-slate-900">输出格式</h3>
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">输出格式</h3>
                 <div className="prose-oj mt-1" dangerouslySetInnerHTML={{ __html: marked.parse(problem.output_format, { async: false }) as string }} />
               </section>
             )}
 
             {samples.length > 0 && (
               <section className="mt-5">
-                <h3 className="mb-2 text-sm font-semibold text-slate-900">样例</h3>
+                <h3 className="mb-2 text-sm font-semibold text-slate-900 dark:text-slate-100">样例</h3>
                 <div className="space-y-3">
                   {samples.map((s, idx) => (
                     <div key={s.id} className="grid gap-2 sm:grid-cols-2">
                       <div>
-                        <p className="mb-1 text-[11px] font-medium text-slate-400">输入 #{idx + 1}</p>
-                        <pre className="whitespace-pre-wrap rounded-lg border border-slate-200 bg-slate-50 p-2.5 font-mono text-[12px] leading-5 text-slate-700">
+                        <p className="mb-1 text-[11px] font-medium text-slate-400 dark:text-slate-500">输入 #{idx + 1}</p>
+                        <pre className="whitespace-pre-wrap rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-2.5 font-mono text-[12px] leading-5 text-slate-700 dark:text-slate-300">
                           {s.input}
                         </pre>
                       </div>
                       <div>
-                        <p className="mb-1 text-[11px] font-medium text-slate-400">输出 #{idx + 1}</p>
-                        <pre className="whitespace-pre-wrap rounded-lg border border-slate-200 bg-slate-50 p-2.5 font-mono text-[12px] leading-5 text-slate-700">
+                        <p className="mb-1 text-[11px] font-medium text-slate-400 dark:text-slate-500">输出 #{idx + 1}</p>
+                        <pre className="whitespace-pre-wrap rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-2.5 font-mono text-[12px] leading-5 text-slate-700 dark:text-slate-300">
                           {s.expected_output}
                         </pre>
                       </div>
@@ -514,7 +551,7 @@ export function ProblemDetailPage() {
                   </option>
                 ))}
               </select>
-              <span className="text-xs text-slate-400">
+              <span className="text-xs text-slate-400 dark:text-slate-500">
                 {isRunning ? '判题进行中…' : draftTip ? <span className="text-emerald-600">{draftTip}</span> : '代码会自动保存在本机浏览器'}
               </span>
               <div className="ml-auto flex items-center gap-2">
@@ -549,7 +586,7 @@ export function ProblemDetailPage() {
           </div>
 
           {/* 自测 / 判题结果 切换 */}
-          <div className="flex w-fit items-center gap-1 rounded-lg bg-slate-100 p-1">
+          <div className="flex w-fit items-center gap-1 rounded-lg bg-slate-100 dark:bg-slate-800 p-1">
             <button
               className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
                 pane === 'run' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
@@ -590,15 +627,15 @@ export function ProblemDetailPage() {
               compileMsg={compileMsg}
             />
           ) : (
-            <div className="card p-8 text-center text-sm text-slate-400">
+            <div className="card p-8 text-center text-sm text-slate-400 dark:text-slate-500">
               还没有提交记录，写好代码后点「提交代码」，判题结果会实时显示在这里。
             </div>
           )}
 
           {mySubs.length > 0 && (
             <div className="card overflow-hidden">
-              <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2.5">
-                <h3 className="text-sm font-semibold text-slate-800">我的最近提交</h3>
+              <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 px-4 py-2.5">
+                <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-200">我的最近提交</h3>
                 <Link to="/submissions" className="text-xs text-brand-600 hover:text-brand-700">
                   查看全部
                 </Link>
@@ -606,12 +643,12 @@ export function ProblemDetailPage() {
               <ul className="divide-y divide-slate-100">
                 {mySubs.map((s) => (
                   <li key={s.id}>
-                    <Link to={`/submissions/${s.id}`} className="flex items-center gap-3 px-4 py-2.5 text-xs hover:bg-slate-50">
+                    <Link to={`/submissions/${s.id}`} className="flex items-center gap-3 px-4 py-2.5 text-xs hover:bg-slate-50 dark:hover:bg-slate-800/60">
                       <StatusBadge status={s.status} />
-                      <span className="font-mono text-slate-500">{s.language}</span>
-                      <span className="font-mono text-slate-400">{s.time_ms}ms</span>
-                      <span className="font-mono text-slate-400">{formatMemory(s.memory_kb)}</span>
-                      <span className="ml-auto text-slate-400">{formatDateTime(s.created_at)}</span>
+                      <span className="font-mono text-slate-500 dark:text-slate-400">{s.language}</span>
+                      <span className="font-mono text-slate-400 dark:text-slate-500">{s.time_ms}ms</span>
+                      <span className="font-mono text-slate-400 dark:text-slate-500">{formatMemory(s.memory_kb)}</span>
+                      <span className="ml-auto text-slate-400 dark:text-slate-500">{formatDateTime(s.created_at)}</span>
                     </Link>
                   </li>
                 ))}
@@ -621,7 +658,7 @@ export function ProblemDetailPage() {
         </div>
       </div>
 
-      <p className="text-center text-xs text-slate-400">
+      <p className="text-center text-xs text-slate-400 dark:text-slate-500">
         判题状态码：{Object.keys(STATUS_META).slice(2, 8).map((k) => `${k} ${STATUS_META[k as JudgeStatus].label}`).join(' · ')}
       </p>
     </div>

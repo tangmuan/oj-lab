@@ -36,6 +36,38 @@ const testcaseListSchema = z
     '测试点合计体积不能超过 8MB'
   );
 
+/**
+ * 标签是自由文本：trim → 去空 → 去重（SQLite 的 UNIQUE COLLATE NOCASE 让大小写变体合并成一条）。
+ * 上限放在归一化之后判断，避免「重复提交 12 个相同标签」被误判超限。
+ */
+const tagListSchema = z
+  .array(z.string().max(30, '单个标签最多 30 个字符'))
+  .max(30)
+  .transform((list) => Array.from(new Set(list.map((s) => s.trim()).filter((s) => s.length > 0))))
+  .refine((list) => list.length <= 10, '标签最多 10 个');
+
+function saveProblemTags(problemId: number, names: string[]): void {
+  db.prepare('DELETE FROM problem_tags WHERE problem_id = ?').run(problemId);
+  if (names.length === 0) return;
+
+  const insertTag = db.prepare('INSERT OR IGNORE INTO tags (name) VALUES (?)');
+  const findTag = db.prepare('SELECT id FROM tags WHERE name = ?');
+  const link = db.prepare('INSERT OR IGNORE INTO problem_tags (problem_id, tag_id) VALUES (?, ?)');
+  for (const name of names) {
+    insertTag.run(name);
+    const row = findTag.get(name) as { id: number } | undefined;
+    if (row) link.run(problemId, row.id);
+  }
+}
+
+function loadProblemTags(problemId: number): string[] {
+  return (
+    db
+      .prepare('SELECT tg.name FROM tags tg JOIN problem_tags pt ON pt.tag_id = tg.id WHERE pt.problem_id = ? ORDER BY tg.name ASC')
+      .all(problemId) as { name: string }[]
+  ).map((t) => t.name);
+}
+
 const problemSchema = z.object({
   title: z.string().trim().min(1, '标题不能为空').max(120, '标题过长'),
   difficulty: z.enum(['easy', 'medium', 'hard']).default('easy'),
@@ -202,15 +234,15 @@ adminRouter.get(
     const testcases = db
       .prepare('SELECT * FROM testcases WHERE problem_id = ? ORDER BY is_sample DESC, ord ASC, id ASC')
       .all(id);
-    res.json({ problem, testcases });
+    res.json({ problem, testcases, tags: loadProblemTags(id) });
   })
 );
 
 adminRouter.post(
   '/problems',
   ah(async (req, res) => {
-    const { testcases, ...data } = problemSchema
-      .extend({ testcases: testcaseListSchema.optional() })
+    const { testcases, tags, ...data } = problemSchema
+      .extend({ testcases: testcaseListSchema.optional(), tags: tagListSchema.optional() })
       .parse(req.body);
 
     const info = db.transaction(() => {
@@ -227,6 +259,7 @@ adminRouter.post(
         );
         testcases.forEach((tc, idx) => stmt.run(pid, tc.input, tc.expected_output, tc.is_sample, tc.ord || idx + 1));
       }
+      saveProblemTags(pid, tags ?? []);
       return pid;
     })();
 
@@ -239,16 +272,22 @@ adminRouter.put(
   ah(async (req, res) => {
     const id = Number(req.params.id);
     loadProblem(id);
-    const data = problemSchema.partial().parse(req.body);
+    const { tags, ...data } = problemSchema
+      .extend({ tags: tagListSchema.optional() })
+      .partial()
+      .parse(req.body);
     const keys = Object.keys(data) as (keyof typeof data)[];
-    // 空 body 是「没给要改什么」，属于请求错误，不是资源不存在
-    if (keys.length === 0) throw badRequest('没有需要更新的字段');
+    // 只改标签也是合法更新；空 body 才是「没给要改什么」
+    if (keys.length === 0 && tags === undefined) throw badRequest('没有需要更新的字段');
 
-    const setSql = keys.map((k) => `${k} = ?`).join(', ');
-    db.prepare(`UPDATE problems SET ${setSql}, updated_at = datetime('now') WHERE id = ?`).run(
-      ...keys.map((k) => data[k] as never),
-      id
-    );
+    if (keys.length > 0) {
+      const setSql = keys.map((k) => `${k} = ?`).join(', ');
+      db.prepare(`UPDATE problems SET ${setSql}, updated_at = datetime('now') WHERE id = ?`).run(
+        ...keys.map((k) => data[k] as never),
+        id
+      );
+    }
+    if (tags !== undefined) saveProblemTags(id, tags);
     res.json({ ok: true, problem: loadProblem(id) });
   })
 );

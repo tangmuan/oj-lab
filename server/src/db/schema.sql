@@ -93,3 +93,27 @@ CREATE TABLE IF NOT EXISTS user_templates (
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (user_id, language)
 );
+
+-- 标签：自由文本，靠 name 唯一去重（NOCASE 让大小写变体落成同一条）
+CREATE TABLE IF NOT EXISTS tags (
+  id   INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE COLLATE NOCASE
+);
+
+CREATE TABLE IF NOT EXISTS problem_tags (
+  problem_id INTEGER NOT NULL REFERENCES problems(id) ON DELETE CASCADE,
+  tag_id     INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+  PRIMARY KEY (problem_id, tag_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_problem_tags_tag ON problem_tags(tag_id);
+
+-- 收藏：一个用户对一道题只有一条记录，重复收藏靠主键挡住
+CREATE TABLE IF NOT EXISTS favorites (
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  problem_id INTEGER NOT NULL REFERENCES problems(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (user_id, problem_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_favorites_user ON favorites(user_id, created_at);

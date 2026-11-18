@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { config } from '../config';
 import { db } from '../db';
 import { enqueueSubmission, judgeEvents } from '../judge';
+import type { FirstDiff } from '../judge/comparator';
 import { isLanguageId } from '../judge/languages';
 import { authenticateStream, optionalAuth, requireAuth } from '../middleware/auth';
 import { ProblemRow, SubmissionCaseRow, SubmissionRow } from '../types';
@@ -20,6 +21,10 @@ const createSchema = z.object({
 const listQuery = z.object({
   mine: z.coerce.number().int().default(0),
   problemId: z.coerce.number().int().positive().optional(),
+  /** 查看指定用户（仅本人或管理员），用于「与上次提交对比」定位同一人的历史记录 */
+  userId: z.coerce.number().int().positive().optional(),
+  /** 只看 id 小于该值的记录，避免翻页找「上一条」 */
+  beforeId: z.coerce.number().int().positive().optional(),
   status: z.string().max(10).optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
@@ -69,6 +74,16 @@ submissionsRouter.get(
       if (!req.user) throw new AppError('请先登录', 401, 'UNAUTHORIZED');
       where.push('s.user_id = ?');
       params.push(req.user.id);
+    } else if (q.userId) {
+      // 看别人的提交只允许管理员，前端隐藏按钮不算数
+      if (!req.user) throw unauthorized();
+      if (req.user.id !== q.userId && req.user.role !== 'admin') throw forbidden('只能查看自己的提交');
+      where.push('s.user_id = ?');
+      params.push(q.userId);
+    }
+    if (q.beforeId) {
+      where.push('s.id < ?');
+      params.push(q.beforeId);
     }
     if (q.problemId) {
       where.push('s.problem_id = ?');
@@ -105,6 +120,27 @@ function loadSubmission(id: number): SubmissionRow {
   return sub;
 }
 
+type CaseSummary = Pick<SubmissionCaseRow, 'case_index' | 'status' | 'time_ms' | 'memory_kb' | 'is_sample' | 'message'>;
+
+/**
+ * submission_cases 表不新增列，差异定位只存在 submissions.detail 的 JSON 里；
+ * 旧提交没有该字段，统一补 null，前端据此决定是否展示差异块。
+ */
+function attachFirstDiffs(sub: SubmissionRow, rows: CaseSummary[]): Array<CaseSummary & { first_diff: FirstDiff | null }> {
+  const diffs = new Map<number, FirstDiff | null>();
+  if (sub.detail) {
+    try {
+      const parsed = JSON.parse(sub.detail) as Array<{ caseIndex?: number; firstDiff?: FirstDiff | null }>;
+      for (const item of parsed) {
+        if (typeof item.caseIndex === 'number') diffs.set(item.caseIndex, item.firstDiff ?? null);
+      }
+    } catch {
+      /* detail 是历史遗留字段，格式坏了就当没有差异信息，不影响查看结果 */
+    }
+  }
+  return rows.map((c) => ({ ...c, first_diff: diffs.get(c.case_index) ?? null }));
+}
+
 submissionsRouter.get(
   '/:id',
   requireAuth,
@@ -114,9 +150,10 @@ submissionsRouter.get(
 
     const sub = loadSubmission(id);
     const canSeeCode = sub.user_id === req.user!.id || req.user!.role === 'admin';
-    const cases = db
+    const caseRows = db
       .prepare('SELECT case_index, status, time_ms, memory_kb, is_sample, message FROM submission_cases WHERE submission_id = ? ORDER BY case_index ASC')
-      .all(id) as Pick<SubmissionCaseRow, 'case_index' | 'status' | 'time_ms' | 'memory_kb' | 'is_sample' | 'message'>[];
+      .all(id) as CaseSummary[];
+    const cases = attachFirstDiffs(sub, caseRows);
 
     const problem = db.prepare('SELECT id, title FROM problems WHERE id = ?').get(sub.problem_id) as { id: number; title: string };
     const owner = db.prepare('SELECT username FROM users WHERE id = ?').get(sub.user_id) as { username: string };

@@ -65,8 +65,8 @@ export function AdminSubmissionsPage() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight text-slate-900">管理端 · 提交记录</h1>
-          <p className="mt-1 text-sm text-slate-500">共 {meta.total} 条 · 可对任意提交触发重判</p>
+          <h1 className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">管理端 · 提交记录</h1>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">共 {meta.total} 条 · 可对任意提交触发重判</p>
         </div>
         <div className="flex gap-2">
           <select
@@ -110,38 +110,38 @@ export function AdminSubmissionsPage() {
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={9} className="py-10 text-center text-sm text-slate-400">
+                <td colSpan={9} className="py-10 text-center text-sm text-slate-400 dark:text-slate-500">
                   加载中…
                 </td>
               </tr>
             )}
             {!loading && items.length === 0 && (
               <tr>
-                <td colSpan={9} className="py-10 text-center text-sm text-slate-400">
+                <td colSpan={9} className="py-10 text-center text-sm text-slate-400 dark:text-slate-500">
                   暂无提交
                 </td>
               </tr>
             )}
             {items.map((s) => (
               <tr key={s.id} className="transition hover:bg-slate-50/70">
-                <td className="font-mono text-xs text-slate-400">
+                <td className="font-mono text-xs text-slate-400 dark:text-slate-500">
                   <Link to={`/submissions/${s.id}`} className="hover:text-brand-600">
                     #{s.id}
                   </Link>
                 </td>
                 <td>
-                  <Link to={`/problems/${s.problem_id}`} className="font-medium text-slate-800 hover:text-brand-600">
+                  <Link to={`/problems/${s.problem_id}`} className="font-medium text-slate-800 dark:text-slate-200 hover:text-brand-600">
                     {s.problem_title}
                   </Link>
                 </td>
-                <td className="text-xs text-slate-600">{s.username}</td>
+                <td className="text-xs text-slate-600 dark:text-slate-300">{s.username}</td>
                 <td>
                   <StatusBadge status={s.status} />
                 </td>
-                <td className="font-mono text-xs text-slate-500">{s.language}</td>
-                <td className="font-mono text-xs text-slate-500">{s.time_ms}ms</td>
-                <td className="font-mono text-xs text-slate-500">{formatMemory(s.memory_kb)}</td>
-                <td className="text-xs text-slate-400">{formatDateTime(s.created_at)}</td>
+                <td className="font-mono text-xs text-slate-500 dark:text-slate-400">{s.language}</td>
+                <td className="font-mono text-xs text-slate-500 dark:text-slate-400">{s.time_ms}ms</td>
+                <td className="font-mono text-xs text-slate-500 dark:text-slate-400">{formatMemory(s.memory_kb)}</td>
+                <td className="text-xs text-slate-400 dark:text-slate-500">{formatDateTime(s.created_at)}</td>
                 <td>
                   <button
                     className="text-xs font-medium text-brand-600 hover:text-brand-700 disabled:text-slate-300"
@@ -157,7 +157,7 @@ export function AdminSubmissionsPage() {
         </table>
 
         {meta.totalPages > 1 && (
-          <div className="flex items-center justify-between border-t border-slate-200 px-4 py-3 text-sm text-slate-500">
+          <div className="flex items-center justify-between border-t border-slate-200 dark:border-slate-700 px-4 py-3 text-sm text-slate-500 dark:text-slate-400">
             <span>
               第 {meta.page}/{meta.totalPages} 页
             </span>

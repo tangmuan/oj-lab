@@ -11,6 +11,7 @@ import { AdminProblemsPage } from './pages/AdminProblemsPage';
 import { AdminProblemEditPage } from './pages/AdminProblemEditPage';
 import { AdminSubmissionsPage } from './pages/AdminSubmissionsPage';
 import { DraftFilesPage } from './pages/DraftFilesPage';
+import { UserProfilePage } from './pages/UserProfilePage';
 
 export function App() {
   return (
@@ -44,6 +45,7 @@ export function App() {
           }
         />
         <Route path="/leaderboard" element={<LeaderboardPage />} />
+        <Route path="/u/:id" element={<UserProfilePage />} />
         <Route
           path="/admin"
           element={

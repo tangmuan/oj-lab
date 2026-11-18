@@ -26,8 +26,8 @@ export function LeaderboardPage() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight text-slate-900">排行榜</h1>
-        <p className="mt-1 text-sm text-slate-500">
+        <h1 className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">排行榜</h1>
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
           按通过题目数排名（同分看提交次数，越少越靠前）· 共 {totalProblems} 道公开题
         </p>
       </div>
@@ -49,33 +49,33 @@ export function LeaderboardPage() {
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={6} className="py-10 text-center text-sm text-slate-400">
+                <td colSpan={6} className="py-10 text-center text-sm text-slate-400 dark:text-slate-500">
                   加载中…
                 </td>
               </tr>
             )}
             {items.map((it) => (
               <tr key={it.id} className={it.id === user?.id ? 'bg-brand-50/40' : 'transition hover:bg-slate-50/70'}>
-                <td className="text-center font-mono text-sm text-slate-500">
+                <td className="text-center font-mono text-sm text-slate-500 dark:text-slate-400">
                   {it.rank <= 3 && it.solved > 0 ? MEDALS[it.rank - 1] : it.rank}
                 </td>
                 <td>
                   <div className="flex items-center gap-2">
-                    <span className="grid h-6 w-6 place-items-center rounded-full bg-slate-100 text-[11px] font-semibold text-slate-600">
+                    <span className="grid h-6 w-6 place-items-center rounded-full bg-slate-100 dark:bg-slate-800 text-[11px] font-semibold text-slate-600 dark:text-slate-300">
                       {it.username.slice(0, 1).toUpperCase()}
                     </span>
-                    <span className="font-medium text-slate-800">{it.username}</span>
+                    <span className="font-medium text-slate-800 dark:text-slate-200">{it.username}</span>
                     {it.role === 'admin' && <span className="chip bg-amber-50 text-amber-700">管理员</span>}
                     {it.id === user?.id && <span className="chip bg-brand-50 text-brand-700">我</span>}
                   </div>
                 </td>
                 <td>
                   <span className="font-mono text-sm font-semibold text-emerald-600">{it.solved}</span>
-                  <span className="ml-1 text-xs text-slate-400">/ {totalProblems}</span>
+                  <span className="ml-1 text-xs text-slate-400 dark:text-slate-500">/ {totalProblems}</span>
                 </td>
-                <td className="font-mono text-xs text-slate-500">{it.submit_count}</td>
-                <td className="font-mono text-xs text-slate-500">{it.ac_rate === null ? '—' : `${it.ac_rate}%`}</td>
-                <td className="text-xs text-slate-400">{formatDateTime(it.last_submit_at)}</td>
+                <td className="font-mono text-xs text-slate-500 dark:text-slate-400">{it.submit_count}</td>
+                <td className="font-mono text-xs text-slate-500 dark:text-slate-400">{it.ac_rate === null ? '—' : `${it.ac_rate}%`}</td>
+                <td className="text-xs text-slate-400 dark:text-slate-500">{formatDateTime(it.last_submit_at)}</td>
               </tr>
             ))}
           </tbody>

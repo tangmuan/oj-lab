@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
-import type { AdminProblem, Difficulty, Testcase } from '../api/types';
+import type { AdminProblemDetail, Difficulty } from '../api/types';
 
 interface FormState {
   title: string;
@@ -43,6 +43,8 @@ export function AdminProblemEditPage() {
 
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [cases, setCases] = useState<EditCase[]>([{ input: '', expected_output: '', is_sample: 1, ord: 1 }]);
+  const [tags, setTags] = useState<string[]>([]);
+  const [tagInput, setTagInput] = useState('');
   const [initialIds, setInitialIds] = useState<number[]>([]);
   const [loading, setLoading] = useState(!isNew);
   const [saving, setSaving] = useState(false);
@@ -54,10 +56,11 @@ export function AdminProblemEditPage() {
       setForm(EMPTY_FORM);
       setCases([{ input: '', expected_output: '', is_sample: 1, ord: 1 }]);
       setInitialIds([]);
+      setTags([]);
       return;
     }
     setLoading(true);
-    api<{ problem: AdminProblem; testcases: Testcase[] }>(`/admin/problems/${problemId}`)
+    api<AdminProblemDetail>(`/admin/problems/${problemId}`)
       .then((r) => {
         const p = r.problem;
         setForm({
@@ -81,6 +84,7 @@ export function AdminProblemEditPage() {
           }))
         );
         setInitialIds(r.testcases.map((t) => t.id));
+        setTags(r.tags);
         setError('');
       })
       .catch((e) => setError(e instanceof ApiError ? e.message : '加载失败'))
@@ -93,6 +97,21 @@ export function AdminProblemEditPage() {
 
   function updateCase(index: number, patch: Partial<EditCase>) {
     setCases((prev) => prev.map((c, i) => (i === index ? { ...c, ...patch } : c)));
+  }
+
+  function addTag() {
+    const name = tagInput.trim();
+    if (!name) return;
+    if (tags.some((t) => t.toLowerCase() === name.toLowerCase())) {
+      setTagInput('');
+      return;
+    }
+    if (tags.length >= 10) {
+      setError('标签最多 10 个');
+      return;
+    }
+    setTags((prev) => [...prev, name]);
+    setTagInput('');
   }
 
   async function save() {
@@ -114,14 +133,14 @@ export function AdminProblemEditPage() {
       if (isNew) {
         const created = await api<{ id: number }>('/admin/problems', {
           method: 'POST',
-          body: { ...payload, testcases: cases.map((c, i) => ({ ...c, ord: i + 1 })) },
+          body: { ...payload, tags, testcases: cases.map((c, i) => ({ ...c, ord: i + 1 })) },
         });
         navigate(`/admin/problems/${created.id}/edit`, { replace: true });
         setOkMsg('题目已创建');
         return;
       }
 
-      await api(`/admin/problems/${problemId}`, { method: 'PUT', body: payload });
+      await api(`/admin/problems/${problemId}`, { method: 'PUT', body: { ...payload, tags } });
 
       // 测试点差量同步：改 → 新增 → 删
       for (const [i, c] of cases.entries()) {
@@ -135,7 +154,7 @@ export function AdminProblemEditPage() {
       }
 
       // 重新拉取，拿到新建测试点的真实 ID
-      const fresh = await api<{ problem: AdminProblem; testcases: Testcase[] }>(`/admin/problems/${problemId}`);
+      const fresh = await api<AdminProblemDetail>(`/admin/problems/${problemId}`);
       setCases(
         fresh.testcases.map((t) => ({
           id: t.id,
@@ -154,20 +173,20 @@ export function AdminProblemEditPage() {
     }
   }
 
-  if (loading) return <div className="py-24 text-center text-sm text-slate-400">加载中…</div>;
+  if (loading) return <div className="py-24 text-center text-sm text-slate-400 dark:text-slate-500">加载中…</div>;
 
   return (
     <div className="mx-auto max-w-4xl space-y-4">
-      <div className="flex items-center gap-2 text-xs text-slate-400">
-        <Link to="/admin" className="hover:text-slate-600">
+      <div className="flex items-center gap-2 text-xs text-slate-400 dark:text-slate-500">
+        <Link to="/admin" className="hover:text-slate-600 dark:hover:text-slate-300">
           管理端
         </Link>
         <span>/</span>
-        <span className="text-slate-500">{isNew ? '新建题目' : `编辑 #${problemId}`}</span>
+        <span className="text-slate-500 dark:text-slate-400">{isNew ? '新建题目' : `编辑 #${problemId}`}</span>
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold tracking-tight text-slate-900">{isNew ? '新建题目' : `编辑题目 #${problemId}`}</h1>
+        <h1 className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">{isNew ? '新建题目' : `编辑题目 #${problemId}`}</h1>
         <div className="flex gap-2">
           {!isNew && (
             <Link to={`/problems/${problemId}`} className="btn-ghost !py-1.5 text-xs" target="_blank">
@@ -184,7 +203,7 @@ export function AdminProblemEditPage() {
       {okMsg && <p className="rounded-lg bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{okMsg}</p>}
 
       <div className="card space-y-4 p-5">
-        <h2 className="text-sm font-semibold text-slate-800">基本信息</h2>
+        <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-200">基本信息</h2>
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="sm:col-span-2">
             <label className="label">标题</label>
@@ -231,13 +250,46 @@ export function AdminProblemEditPage() {
               onChange={(e) => set('memory_limit_mb', e.target.value)}
             />
           </div>
+
+          <div className="sm:col-span-2">
+            <label className="label">标签（最多 10 个，输入后按回车）</label>
+            <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900">
+              {tags.map((t) => (
+                <span key={t} className="chip bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-300">
+                  {t}
+                  <button
+                    type="button"
+                    className="ml-1.5 text-brand-400 hover:text-brand-700 dark:hover:text-brand-200"
+                    onClick={() => setTags((prev) => prev.filter((x) => x !== t))}
+                    aria-label={`删除标签 ${t}`}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+              <input
+                className="min-w-[140px] flex-1 border-0 bg-transparent px-1 py-0.5 text-sm outline-none dark:text-slate-200"
+                value={tagInput}
+                placeholder={tags.length >= 10 ? '已达上限' : '例如：动态规划'}
+                disabled={tags.length >= 10}
+                onChange={(e) => setTagInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    addTag();
+                  }
+                }}
+                onBlur={addTag}
+              />
+            </div>
+          </div>
         </div>
       </div>
 
       <div className="card space-y-4 p-5">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-slate-800">题面</h2>
-          <span className="text-xs text-slate-400">支持 Markdown</span>
+          <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-200">题面</h2>
+          <span className="text-xs text-slate-400 dark:text-slate-500">支持 Markdown</span>
         </div>
         <div>
           <label className="label">题目描述</label>
@@ -267,8 +319,8 @@ export function AdminProblemEditPage() {
       <div className="card space-y-3 p-5">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-sm font-semibold text-slate-800">测试点</h2>
-            <p className="mt-0.5 text-xs text-slate-400">勾选「样例」的测试点会在题面公开展示输入输出</p>
+            <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-200">测试点</h2>
+            <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">勾选「样例」的测试点会在题面公开展示输入输出</p>
           </div>
           <button
             className="btn-ghost !py-1.5 text-xs"
@@ -281,15 +333,15 @@ export function AdminProblemEditPage() {
         {cases.length === 0 && <p className="rounded-lg bg-amber-50 px-3 py-3 text-xs text-amber-700">没有测试点，提交会全部判为系统错误。</p>}
 
         {cases.map((c, i) => (
-          <div key={c.id ?? `new-${i}`} className="rounded-lg border border-slate-200 p-3">
+          <div key={c.id ?? `new-${i}`} className="rounded-lg border border-slate-200 dark:border-slate-700 p-3">
             <div className="mb-2 flex items-center gap-3">
-              <span className="text-xs font-semibold text-slate-600">测试点 {i + 1}</span>
-              <label className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-500">
+              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">测试点 {i + 1}</span>
+              <label className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
                 <input
                   type="checkbox"
                   checked={c.is_sample === 1}
                   onChange={(e) => updateCase(i, { is_sample: e.target.checked ? 1 : 0 })}
-                  className="h-3.5 w-3.5 rounded border-slate-300 text-brand-600"
+                  className="h-3.5 w-3.5 rounded border-slate-300 dark:border-slate-600 text-brand-600"
                 />
                 样例
               </label>
@@ -303,7 +355,7 @@ export function AdminProblemEditPage() {
             </div>
             <div className="grid gap-2 sm:grid-cols-2">
               <div>
-                <label className="mb-1 block text-[11px] text-slate-400">输入</label>
+                <label className="mb-1 block text-[11px] text-slate-400 dark:text-slate-500">输入</label>
                 <textarea
                   className="input min-h-[80px] font-mono text-xs leading-5"
                   value={c.input}
@@ -311,7 +363,7 @@ export function AdminProblemEditPage() {
                 />
               </div>
               <div>
-                <label className="mb-1 block text-[11px] text-slate-400">期望输出</label>
+                <label className="mb-1 block text-[11px] text-slate-400 dark:text-slate-500">期望输出</label>
                 <textarea
                   className="input min-h-[80px] font-mono text-xs leading-5"
                   value={c.expected_output}

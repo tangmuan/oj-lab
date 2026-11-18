@@ -67,8 +67,8 @@ export function AdminProblemsPage() {
     <div className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight text-slate-900">管理端 · 题目</h1>
-          <p className="mt-1 text-sm text-slate-500">维护题面、测试点与可见性；测试点决定判题结果</p>
+          <h1 className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">管理端 · 题目</h1>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">维护题面、测试点与可见性；测试点决定判题结果</p>
         </div>
         <div className="flex gap-2">
           <Link to="/admin/submissions" className="btn-ghost !py-1.5 text-xs">
@@ -99,22 +99,22 @@ export function AdminProblemsPage() {
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={8} className="py-10 text-center text-sm text-slate-400">
+                <td colSpan={8} className="py-10 text-center text-sm text-slate-400 dark:text-slate-500">
                   加载中…
                 </td>
               </tr>
             )}
             {!loading && problems.length === 0 && (
               <tr>
-                <td colSpan={8} className="py-10 text-center text-sm text-slate-400">
+                <td colSpan={8} className="py-10 text-center text-sm text-slate-400 dark:text-slate-500">
                   还没有题目，点击右上角新建
                 </td>
               </tr>
             )}
             {problems.map((p) => (
               <tr key={p.id} className="transition hover:bg-slate-50/70">
-                <td className="font-mono text-xs text-slate-400">#{p.id}</td>
-                <td className="font-medium text-slate-800">{p.title}</td>
+                <td className="font-mono text-xs text-slate-400 dark:text-slate-500">#{p.id}</td>
+                <td className="font-medium text-slate-800 dark:text-slate-200">{p.title}</td>
                 <td>
                   <span className={`chip ${DIFFICULTY_META[p.difficulty].className}`}>{DIFFICULTY_META[p.difficulty].label}</span>
                 </td>
@@ -122,12 +122,12 @@ export function AdminProblemsPage() {
                   {p.is_public ? (
                     <span className="chip bg-emerald-50 text-emerald-700">公开</span>
                   ) : (
-                    <span className="chip bg-slate-100 text-slate-500">隐藏</span>
+                    <span className="chip bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">隐藏</span>
                   )}
                 </td>
-                <td className="font-mono text-xs text-slate-500">{p.case_count}</td>
-                <td className="font-mono text-xs text-slate-500">{p.submit_count}</td>
-                <td className="whitespace-nowrap font-mono text-[11px] text-slate-500">
+                <td className="font-mono text-xs text-slate-500 dark:text-slate-400">{p.case_count}</td>
+                <td className="font-mono text-xs text-slate-500 dark:text-slate-400">{p.submit_count}</td>
+                <td className="whitespace-nowrap font-mono text-[11px] text-slate-500 dark:text-slate-400">
                   {p.time_limit_ms}ms / {p.memory_limit_mb}MB
                 </td>
                 <td>
@@ -147,8 +147,8 @@ export function AdminProblemsPage() {
       </div>
 
       <div className="card overflow-hidden">
-        <div className="border-b border-slate-200 px-4 py-2.5">
-          <h2 className="text-sm font-semibold text-slate-800">用户</h2>
+        <div className="border-b border-slate-200 dark:border-slate-700 px-4 py-2.5">
+          <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-200">用户</h2>
         </div>
         <table className="table-base">
           <thead>
@@ -164,17 +164,17 @@ export function AdminProblemsPage() {
           <tbody>
             {users.map((u) => (
               <tr key={u.id}>
-                <td className="font-mono text-xs text-slate-400">#{u.id}</td>
-                <td className="font-medium text-slate-800">{u.username}</td>
+                <td className="font-mono text-xs text-slate-400 dark:text-slate-500">#{u.id}</td>
+                <td className="font-medium text-slate-800 dark:text-slate-200">{u.username}</td>
                 <td>
                   {u.role === 'admin' ? (
                     <span className="chip bg-amber-50 text-amber-700">管理员</span>
                   ) : (
-                    <span className="chip bg-slate-100 text-slate-500">普通用户</span>
+                    <span className="chip bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">普通用户</span>
                   )}
                 </td>
-                <td className="font-mono text-xs text-slate-500">{u.solved}</td>
-                <td className="font-mono text-xs text-slate-500">{u.submit_count}</td>
+                <td className="font-mono text-xs text-slate-500 dark:text-slate-400">{u.solved}</td>
+                <td className="font-mono text-xs text-slate-500 dark:text-slate-400">{u.submit_count}</td>
                 <td>
                   <button
                     className="text-xs font-medium text-brand-600 hover:text-brand-700 disabled:text-slate-300"

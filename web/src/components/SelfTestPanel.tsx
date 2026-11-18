@@ -30,16 +30,16 @@ export function SelfTestPanel({ input, onInputChange, result, running, error, sa
   return (
     <div className="card p-4">
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <h3 className="text-sm font-semibold text-slate-800">自测运行</h3>
-        <span className="text-xs text-slate-400">用你自己的输入跑一遍，不会计入提交记录</span>
+        <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-200">自测运行</h3>
+        <span className="text-xs text-slate-400 dark:text-slate-500">用你自己的输入跑一遍，不会计入提交记录</span>
 
         {showSampleShortcuts && samples.length > 0 && (
           <div className="ml-auto flex flex-wrap items-center gap-1.5">
-            <span className="text-[11px] text-slate-400">填充样例</span>
+            <span className="text-[11px] text-slate-400 dark:text-slate-500">填充样例</span>
             {samples.slice(0, 3).map((s, i) => (
               <button
                 key={s.id}
-                className="rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-500 hover:border-brand-300 hover:text-brand-600"
+                className="rounded border border-slate-200 dark:border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-500 dark:text-slate-400 hover:border-brand-300 hover:text-brand-600"
                 onClick={() => onFillSample(s.input)}
               >
                 #{i + 1}
@@ -52,9 +52,9 @@ export function SelfTestPanel({ input, onInputChange, result, running, error, sa
       <div className="grid gap-3 lg:grid-cols-2">
         <div>
           <div className="mb-1 flex items-center justify-between">
-            <label className="text-[11px] font-medium text-slate-400">标准输入</label>
+            <label className="text-[11px] font-medium text-slate-400 dark:text-slate-500">标准输入</label>
             <button
-              className="text-[11px] text-slate-400 hover:text-slate-600"
+              className="text-[11px] text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300"
               onClick={() => onInputChange('')}
               type="button"
             >
@@ -72,9 +72,9 @@ export function SelfTestPanel({ input, onInputChange, result, running, error, sa
 
         <div>
           <div className="mb-1 flex items-center justify-between">
-            <label className="text-[11px] font-medium text-slate-400">程序输出</label>
+            <label className="text-[11px] font-medium text-slate-400 dark:text-slate-500">程序输出</label>
             <button
-              className="text-[11px] text-slate-400 hover:text-slate-600 disabled:opacity-40"
+              className="text-[11px] text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 disabled:opacity-40"
               onClick={copyOutput}
               disabled={!result?.stdout}
               type="button"
@@ -84,7 +84,7 @@ export function SelfTestPanel({ input, onInputChange, result, running, error, sa
           </div>
           <pre
             data-testid="self-output"
-            className="h-32 overflow-auto whitespace-pre-wrap rounded-lg border border-slate-200 bg-slate-900 p-3 font-mono text-xs leading-5 text-slate-100"
+            className="h-32 overflow-auto whitespace-pre-wrap rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-900 dark:bg-slate-950 p-3 font-mono text-xs leading-5 text-slate-100"
           >
             {running ? '运行中…' : result ? result.stdout || (result.status === 'OK' ? '（程序没有输出）' : '') : '点击「运行」后在这里查看输出'}
           </pre>
@@ -92,21 +92,21 @@ export function SelfTestPanel({ input, onInputChange, result, running, error, sa
       </div>
 
       {meta && (
-        <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-slate-500">
+        <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-slate-500 dark:text-slate-400">
           <span className={`chip ${meta.className}`}>{meta.label}</span>
           <span>
-            耗时 <b className="font-mono text-slate-700">{result?.timeMs ?? 0} ms</b>
+            耗时 <b className="font-mono text-slate-700 dark:text-slate-300">{result?.timeMs ?? 0} ms</b>
           </span>
           <span>
-            内存 <b className="font-mono text-slate-700">{formatMemory(result?.memoryKb ?? 0)}</b>
+            内存 <b className="font-mono text-slate-700 dark:text-slate-300">{formatMemory(result?.memoryKb ?? 0)}</b>
           </span>
           {result?.exitCode !== null && result?.exitCode !== undefined && (
             <span>
-              退出码 <b className="font-mono text-slate-700">{result.exitCode}</b>
+              退出码 <b className="font-mono text-slate-700 dark:text-slate-300">{result.exitCode}</b>
             </span>
           )}
           {result?.truncated && <span className="text-amber-600">输出过长，已截断显示</span>}
-          <span className="ml-auto text-slate-400">Ctrl + Enter 运行 · Ctrl + Shift + Enter 提交</span>
+          <span className="ml-auto text-slate-400 dark:text-slate-500">Ctrl + Enter 运行 · Ctrl + Shift + Enter 提交</span>
         </div>
       )}
 
@@ -114,8 +114,8 @@ export function SelfTestPanel({ input, onInputChange, result, running, error, sa
 
       {result?.compileMsg && (
         <div className="mt-3">
-          <p className="mb-1 text-xs font-medium text-slate-500">编译输出</p>
-          <pre className="max-h-52 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-900 p-3 font-mono text-[12px] leading-5 text-slate-100">
+          <p className="mb-1 text-xs font-medium text-slate-500 dark:text-slate-400">编译输出</p>
+          <pre className="max-h-52 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-900 dark:bg-slate-950 p-3 font-mono text-[12px] leading-5 text-slate-100">
             {result.compileMsg}
           </pre>
         </div>
