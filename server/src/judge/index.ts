@@ -58,6 +58,10 @@ export function recoverPending(): number {
 
 function emit(id: number, payload: unknown): void {
   judgeEvents.emit(`sub:${id}`, payload);
+  // 批量重判靠这个全局信号统计进度，避免为每条提交单独挂监听
+  if ((payload as { type?: string }).type === 'done') {
+    judgeEvents.emit('any-done', payload);
+  }
 }
 
 function updateSubmission(id: number, patch: Partial<SubmissionRow>): void {

@@ -5,7 +5,8 @@ const TICKET_TTL_MS = 60_000;
 
 interface TicketRecord {
   userId: number;
-  submissionId: number;
+  /** 访问范围，例如 `sub:12`（某次提交的判题流）或 `batch:xxx`（批量重判进度） */
+  scope: string;
   expiresAt: number;
 }
 
@@ -18,19 +19,19 @@ function sweep(now: number): void {
   }
 }
 
-export function issueStreamTicket(userId: number, submissionId: number): string {
+export function issueStreamTicket(userId: number, scope: string): string {
   const now = Date.now();
   sweep(now);
   const ticket = crypto.randomUUID();
-  tickets.set(ticket, { userId, submissionId, expiresAt: now + TICKET_TTL_MS });
+  tickets.set(ticket, { userId, scope, expiresAt: now + TICKET_TTL_MS });
   return ticket;
 }
 
 /** 消费即作废：无论后续校验是否通过，同一张票都不能用第二次 */
-export function consumeStreamTicket(ticket: string): Omit<TicketRecord, 'expiresAt'> | null {
+export function consumeStreamTicket(ticket: string): { userId: number; scope: string } | null {
   const record = tickets.get(ticket);
   if (!record) return null;
   tickets.delete(ticket);
   if (record.expiresAt <= Date.now()) return null;
-  return { userId: record.userId, submissionId: record.submissionId };
+  return { userId: record.userId, scope: record.scope };
 }

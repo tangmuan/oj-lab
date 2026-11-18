@@ -200,7 +200,7 @@ submissionsRouter.post(
     if (!sub) throw notFound('提交记录不存在');
     if (sub.user_id !== req.user!.id && req.user!.role !== 'admin') throw forbidden('无权查看该提交');
 
-    res.json({ ticket: issueStreamTicket(req.user!.id, id), expiresIn: 60 });
+    res.json({ ticket: issueStreamTicket(req.user!.id, `sub:${id}`), expiresIn: 60 });
   })
 );
 

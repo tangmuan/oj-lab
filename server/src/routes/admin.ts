@@ -1,7 +1,11 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { db } from '../db';
-import { enqueueSubmission } from '../judge';
+import { enqueueSubmission, judgeEvents } from '../judge';
+import { createRejudgeBatch, getBatch, MAX_BATCH_SIZE } from '../judge/batch';
+import { issueStreamTicket } from '../utils/streamTickets';
+import { openSse } from '../utils/sse';
+import { toSqlUtc } from '../utils/contest';
 import { requireAdmin, requireAuth } from '../middleware/auth';
 import { ProblemRow, TestcaseRow } from '../types';
 import { ah, badRequest, notFound } from '../utils/errors';
@@ -152,6 +156,88 @@ adminRouter.post(
 
     enqueueSubmission(id);
     res.json({ ok: true, id, status: 'PENDING' });
+  })
+);
+
+/* ---------------- 批量重判 ---------------- */
+
+const rejudgeBatchSchema = z.object({
+  problemId: z.coerce.number().int().positive().optional(),
+  status: z.string().max(10).optional(),
+  from: z.string().datetime({ offset: true, message: '起始时间格式不正确' }).optional(),
+  to: z.string().datetime({ offset: true, message: '结束时间格式不正确' }).optional(),
+  limit: z.coerce.number().int().min(1).max(MAX_BATCH_SIZE).default(MAX_BATCH_SIZE),
+  confirm: z.boolean().refine((v) => v, '批量重判需要二次确认'),
+});
+
+adminRouter.post(
+  '/submissions/rejudge-batch',
+  ah(async (req, res) => {
+    const q = rejudgeBatchSchema.parse(req.body);
+
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (q.problemId) {
+      where.push('problem_id = ?');
+      params.push(q.problemId);
+    }
+    if (q.status) {
+      where.push('status = ?');
+      params.push(q.status);
+    }
+    if (q.from) {
+      where.push('created_at >= ?');
+      params.push(toSqlUtc(q.from));
+    }
+    if (q.to) {
+      where.push('created_at <= ?');
+      params.push(toSqlUtc(q.to));
+    }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const ids = (
+      db
+        .prepare(`SELECT id FROM submissions ${whereSql} ORDER BY id ASC LIMIT ?`)
+        .all(...(params as never[]), q.limit) as Array<{ id: number }>
+    ).map((r) => r.id);
+
+    if (ids.length === 0) {
+      res.json({ batchId: null, total: 0 });
+      return;
+    }
+
+    const clearCases = db.prepare('DELETE FROM submission_cases WHERE submission_id = ?');
+    const reset = db.prepare(
+      "UPDATE submissions SET status = 'PENDING', time_ms = 0, memory_kb = 0, pass_count = 0, total_count = 0, compile_msg = NULL, detail = NULL, judged_at = NULL WHERE id = ?"
+    );
+    db.transaction(() => {
+      for (const id of ids) {
+        clearCases.run(id);
+        reset.run(id);
+      }
+    })();
+
+    // 只入队，不同步判：500 条同步跑会把接口挂死
+    const batch = createRejudgeBatch(ids);
+    res.json({ batchId: batch.id, total: batch.total });
+  })
+);
+
+adminRouter.get(
+  '/submissions/rejudge-batch/:batchId',
+  ah(async (req, res) => {
+    const batch = getBatch(req.params.batchId);
+    if (!batch) throw notFound('批次不存在或已过期');
+    res.json({ batchId: batch.id, total: batch.total, done: batch.done, finished: batch.finished });
+  })
+);
+
+adminRouter.post(
+  '/submissions/rejudge-batch/:batchId/ticket',
+  ah(async (req, res) => {
+    const batch = getBatch(req.params.batchId);
+    if (!batch) throw notFound('批次不存在或已过期');
+    res.json({ ticket: issueStreamTicket(req.user!.id, `batch:${batch.id}`), expiresIn: 60 });
   })
 );
 

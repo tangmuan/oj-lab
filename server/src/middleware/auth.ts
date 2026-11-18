@@ -62,8 +62,8 @@ export function authenticateStream(req: Request, submissionId: number): AuthUser
   const ticket = typeof req.query.ticket === 'string' ? req.query.ticket : '';
   if (ticket) {
     const record = consumeStreamTicket(ticket);
-    // 票据绑定提交 id，防止拿自己提交的票去看别人的判题过程
-    if (!record || record.submissionId !== submissionId) return null;
+    // 票据绑定访问范围，防止拿自己提交的票去看别人的判题过程
+    if (!record || record.scope !== `sub:${submissionId}`) return null;
     return loadUserById(record.userId);
   }
   return resolveUser(req);

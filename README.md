@@ -119,7 +119,9 @@ npm run start         # 默认 0.0.0.0:3001，启动日志会打印局域网地�
 - 判题结果：SSE 实时逐点结果（前端断线自动降级轮询），编译错误输出、样例差异提示；推送完成后服务端主动断流，并用 60 秒一次性 ticket 代替 URL 上的长期 token
 - 历史：我的提交列表（按状态筛选）、提交详情（代码只对本人/管理员可见）
 - 排名：通过题数榜（同分看提交次数）、通过率、最近提交时间
+- **比赛**：`/contests` 列表与详情、报名、10 分钟倒计时、实时榜单（首次 AC + 20 分钟/次罚时）；封榜期间非管理员只看到「?」，结束或手动解封后自动公布；比赛进行中禁止查看他人提交详情；未开始的比赛不下发题目
 - 管理端：题目 CRUD、标签编辑、测试点增删改（样例标记）、可见性、提交列表、任意提交重判、用户角色调整
+- **批量重判**：按题目 / 状态 / 时间范围筛选，一次最多 500 条，必须勾选二次确认；只入队不阻塞接口，进度走 SSE（`/api/streams/batch/:id`）实时推送，断线可查状态接口
 - 安全：Zod 入参校验、密码 bcrypt、参数化 SQL、管理端接口双重鉴权、代码长度/输出体积上限、测试点提交总量上限 8MB
 
 ## 目录结构
@@ -181,6 +183,9 @@ POST /api/submissions/:id/stream-ticket   # 换 60 秒一次性 SSE 票据
 GET  /api/submissions/:id/stream?ticket=  # SSE（也兼容 Authorization 头）
 GET  /api/problems/tags             # 标签云（含每标签题目数）
 POST|DELETE /api/problems/:id/favorite    # 收藏 / 取消收藏
+GET  /api/contests                  GET /api/contests/:id     # 比赛列表 / 详情（含题目）
+POST|DELETE /api/contests/:id/register    # 报名 / 取消报名
+GET  /api/contests/:id/standings    # 实时榜单（封榜时对非管理员隐藏结果）
 GET  /api/stats/overview            GET /api/stats/leaderboard
 GET  /api/stats/problems/:id        GET /api/stats/users/:id   # 个人主页（含 26 周热力图数据）
 管理端（需 admin）
@@ -188,7 +193,13 @@ GET|POST /api/admin/problems        GET|PUT|DELETE /api/admin/problems/:id
 GET|POST /api/admin/problems/:id/testcases
 PUT|DELETE /api/admin/testcases/:tid
 GET  /api/admin/submissions         POST /api/admin/submissions/:id/rejudge
+POST /api/admin/submissions/rejudge-batch          # 批量重判（confirm=true，limit ≤ 500）
+GET  /api/admin/submissions/rejudge-batch/:batchId # 进度查询
 GET  /api/admin/users               PATCH /api/admin/users/:id/role
+GET|POST /api/admin/contests        GET|PUT|DELETE /api/admin/contests/:id
+PUT  /api/admin/contests/:id/problems              # 覆盖式挂题（A/B/C 编号）
+POST /api/admin/contests/:id/unfreeze              # 手动解封
+GET  /api/streams/batch/:id?ticket=                # 批量重判进度 SSE（一次性票据）
 ```
 
 ## 环境变量（server/.env）
@@ -217,6 +228,7 @@ GET  /api/admin/users               PATCH /api/admin/users/:id/role
 9. **代码 diff 有规模上限。** 单侧超过 1500 行时降级成「整段删除 + 整段新增」，不再做 LCS（DP 表太占内存），行号仍然正确。
 10. **SPJ 的 stderr 会原样给学生看。** 这是「说清楚为什么错」的代价：checker 如果把标准答案写进 stderr，等于泄露测试点。写 checker 时要像写报错信息一样克制（只给误差数值或判定依据）。
 11. **checker 与选手代码共用一个沙箱。** checker 同样没有真正的隔离，只适合本地教学环境。
+12. **批量重判的进度存在进程内存。** 服务重启后批次记录消失（提交本身仍会继续判完）；单次上限 500 条，更大的量应该拆成多批或改用独立任务系统。
 
 ## 后续可做
 
