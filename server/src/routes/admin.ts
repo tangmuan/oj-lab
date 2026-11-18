@@ -5,10 +5,12 @@ import { enqueueSubmission } from '../judge';
 import { requireAdmin, requireAuth } from '../middleware/auth';
 import { ProblemRow, TestcaseRow } from '../types';
 import { ah, badRequest, notFound } from '../utils/errors';
+import { adminContestsRouter } from './adminContests';
 
 export const adminRouter = Router();
 
 adminRouter.use(requireAuth, requireAdmin);
+adminRouter.use('/contests', adminContestsRouter);
 
 const testcaseSchema = z.object({
   input: z.string().max(200000).default(''),

@@ -86,3 +86,21 @@ export function formatMemory(kb: number): string {
 export function formatTimeLimit(ms: number): string {
   return ms % 1000 === 0 ? `${ms / 1000} s` : `${ms} ms`;
 }
+
+/** SQLite 的 UTC 'YYYY-MM-DD HH:MM:SS' 转成本地 Date；非法值返回 null */
+export function parseUtc(value: string | null | undefined): Date | null {
+  if (!value) return null;
+  const d = new Date(`${value.replace(' ', 'T')}Z`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** 倒计时文案：超过一小时给「1 小时 23 分」，否则给 mm:ss */
+export function formatCountdown(ms: number): string {
+  if (ms <= 0) return '00:00';
+  const totalSec = Math.floor(ms / 1000);
+  const hours = Math.floor(totalSec / 3600);
+  const minutes = Math.floor((totalSec % 3600) / 60);
+  const seconds = totalSec % 60;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return hours > 0 ? `${hours} 小时 ${pad(minutes)} 分` : `${pad(minutes)}:${pad(seconds)}`;
+}

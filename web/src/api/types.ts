@@ -226,6 +226,85 @@ export interface AdminProblemDetail {
   tags: string[];
 }
 
+export type ContestPhase = 'upcoming' | 'running' | 'ended';
+
+export interface Contest {
+  id: number;
+  title: string;
+  start_at: string;
+  end_at: string;
+  frozen_minutes: number;
+  is_public: number;
+  unfrozen_at: string | null;
+  created_at: string;
+  phase: ContestPhase;
+  frozen: boolean;
+  freezeAt: string | null;
+}
+
+export interface ContestListItem extends Contest {
+  problem_count: number;
+  registered_count: number;
+  mine: boolean;
+}
+
+export interface ContestProblemItem {
+  problemId: number;
+  label: string;
+  ord: number;
+  title: string;
+  difficulty: Difficulty;
+}
+
+export interface ContestDetail {
+  contest: Contest;
+  problems: ContestProblemItem[];
+  mine: boolean;
+  serverTime: string;
+}
+
+export interface StandingCell {
+  problemId: number;
+  status: 'AC' | 'WA' | 'FROZEN' | 'NONE';
+  tries: number;
+  acTimeMs: number | null;
+}
+
+export interface StandingRow {
+  rank: number;
+  userId: number;
+  username: string;
+  solved: number;
+  penalty: number;
+  cells: StandingCell[];
+}
+
+export interface Standings {
+  frozen: boolean;
+  freezeAt: string | null;
+  serverTime: string;
+  rows: StandingRow[];
+}
+
+/** 管理端拿到的是库里的原始行，没有 phase/frozen 这类运行期字段 */
+export interface AdminContest {
+  id: number;
+  title: string;
+  start_at: string;
+  end_at: string;
+  frozen_minutes: number;
+  is_public: number;
+  unfrozen_at: string | null;
+  created_at: string;
+  problem_count: number;
+  registered_count: number;
+}
+
+export interface AdminContestDetail {
+  contest: Omit<AdminContest, 'problem_count' | 'registered_count'>;
+  problems: ContestProblemItem[];
+}
+
 export interface ProfileSubmission {
   id: number;
   problem_id: number;

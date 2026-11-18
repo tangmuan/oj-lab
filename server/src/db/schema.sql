@@ -117,3 +117,33 @@ CREATE TABLE IF NOT EXISTS favorites (
 );
 
 CREATE INDEX IF NOT EXISTS idx_favorites_user ON favorites(user_id, created_at);
+
+-- 比赛：时间统一存 UTC 的 'YYYY-MM-DD HH:MM:SS'，与 submissions.created_at 同口径
+CREATE TABLE IF NOT EXISTS contests (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  title          TEXT NOT NULL,
+  start_at       TEXT NOT NULL,
+  end_at         TEXT NOT NULL,
+  frozen_minutes INTEGER NOT NULL DEFAULT 0,
+  is_public      INTEGER NOT NULL DEFAULT 1,
+  -- 手动解封时间；NULL 表示还没手动解封，封榜按 end_at 自动解除
+  unfrozen_at    TEXT,
+  created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS contest_problems (
+  contest_id INTEGER NOT NULL REFERENCES contests(id) ON DELETE CASCADE,
+  problem_id INTEGER NOT NULL REFERENCES problems(id) ON DELETE CASCADE,
+  label      TEXT NOT NULL,
+  ord        INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (contest_id, problem_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_contest_problems_problem ON contest_problems(problem_id);
+
+CREATE TABLE IF NOT EXISTS contest_registrations (
+  contest_id    INTEGER NOT NULL REFERENCES contests(id) ON DELETE CASCADE,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  registered_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (contest_id, user_id)
+);

@@ -12,6 +12,9 @@ import { AdminProblemEditPage } from './pages/AdminProblemEditPage';
 import { AdminSubmissionsPage } from './pages/AdminSubmissionsPage';
 import { DraftFilesPage } from './pages/DraftFilesPage';
 import { UserProfilePage } from './pages/UserProfilePage';
+import { ContestListPage } from './pages/ContestListPage';
+import { ContestDetailPage } from './pages/ContestDetailPage';
+import { AdminContestsPage } from './pages/AdminContestsPage';
 
 export function App() {
   return (
@@ -46,6 +49,16 @@ export function App() {
         />
         <Route path="/leaderboard" element={<LeaderboardPage />} />
         <Route path="/u/:id" element={<UserProfilePage />} />
+        <Route path="/contests" element={<ContestListPage />} />
+        <Route path="/contests/:id" element={<ContestDetailPage />} />
+        <Route
+          path="/admin/contests"
+          element={
+            <ProtectedRoute admin>
+              <AdminContestsPage />
+            </ProtectedRoute>
+          }
+        />
         <Route
           path="/admin"
           element={

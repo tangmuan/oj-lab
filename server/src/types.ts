@@ -67,6 +67,25 @@ export interface SubmissionCaseRow {
   message: string | null;
 }
 
+export interface ContestRow {
+  id: number;
+  title: string;
+  /** UTC 'YYYY-MM-DD HH:MM:SS'，与 submissions.created_at 同口径 */
+  start_at: string;
+  end_at: string;
+  frozen_minutes: number;
+  is_public: number;
+  unfrozen_at: string | null;
+  created_at: string;
+}
+
+export interface ContestProblemRow {
+  contest_id: number;
+  problem_id: number;
+  label: string;
+  ord: number;
+}
+
 export interface UserFileRow {
   id: number;
   user_id: number;

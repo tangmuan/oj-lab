@@ -9,6 +9,7 @@ import { authenticateStream, optionalAuth, requireAuth } from '../middleware/aut
 import { ProblemRow, SubmissionCaseRow, SubmissionRow } from '../types';
 import { ah, AppError, forbidden, notFound, unauthorized } from '../utils/errors';
 import { issueStreamTicket } from '../utils/streamTickets';
+import { nowSqlUtc } from '../utils/contest';
 
 export const submissionsRouter = Router();
 
@@ -149,6 +150,17 @@ submissionsRouter.get(
     if (!Number.isInteger(id) || id <= 0) throw notFound('提交记录不存在');
 
     const sub = loadSubmission(id);
+    // 比赛进行中，别人的提交详情（代码/用例/差异）可能泄题，一律拒绝
+    if (sub.user_id !== req.user!.id && req.user!.role !== 'admin') {
+      const inRunningContest = db
+        .prepare(
+          `SELECT 1 AS hit FROM contests c JOIN contest_problems cp ON cp.contest_id = c.id
+           WHERE cp.problem_id = ? AND c.start_at <= ? AND c.end_at > ? LIMIT 1`
+        )
+        .get(sub.problem_id, sub.created_at, nowSqlUtc());
+      if (inRunningContest) throw forbidden('比赛进行中，无法查看他人的提交详情');
+    }
+
     const canSeeCode = sub.user_id === req.user!.id || req.user!.role === 'admin';
     const caseRows = db
       .prepare('SELECT case_index, status, time_ms, memory_kb, is_sample, message FROM submission_cases WHERE submission_id = ? ORDER BY case_index ASC')

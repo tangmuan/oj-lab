@@ -4,6 +4,7 @@ import { useTheme } from '../context/ThemeContext';
 
 const navItems = [
   { to: '/', label: '题目', end: true },
+  { to: '/contests', label: '比赛' },
   { to: '/files', label: '草稿箱' },
   { to: '/submissions', label: '提交记录' },
   { to: '/leaderboard', label: '排行榜' },

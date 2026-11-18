@@ -12,6 +12,7 @@ import { adminRouter } from './routes/admin';
 import { runRouter } from './routes/run';
 import { filesRouter } from './routes/files';
 import { templatesRouter } from './routes/templates';
+import { contestsRouter } from './routes/contests';
 import { LANGUAGES } from './judge/languages';
 import { queueStats } from './judge';
 
@@ -46,6 +47,7 @@ export function createApp() {
   app.use('/api/run', runRouter);
   app.use('/api/files', filesRouter);
   app.use('/api/templates', templatesRouter);
+  app.use('/api/contests', contestsRouter);
   app.use('/api/admin', jsonAdmin, adminRouter);
 
   // 生产模式：若前端已构建（web/dist 存在），由后端一并托管，实现单端口同源部署

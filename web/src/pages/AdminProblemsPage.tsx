@@ -71,6 +71,9 @@ export function AdminProblemsPage() {
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">维护题面、测试点与可见性；测试点决定判题结果</p>
         </div>
         <div className="flex gap-2">
+          <Link to="/admin/contests" className="btn-ghost !py-1.5 text-xs">
+            比赛管理
+          </Link>
           <Link to="/admin/submissions" className="btn-ghost !py-1.5 text-xs">
             提交记录
           </Link>
