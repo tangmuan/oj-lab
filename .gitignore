@@ -12,6 +12,7 @@ server/data/tmptest/
 
 # 验证产物
 web/screenshots/
+verify_tmp/
 
 # 环境变量（含密钥，不入库）
 server/.env
