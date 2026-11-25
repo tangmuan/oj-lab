@@ -1,6 +1,7 @@
 export type Difficulty = 'easy' | 'medium' | 'hard';
 export type Role = 'user' | 'admin';
 export type LanguageId = 'python' | 'node' | 'c' | 'cpp' | 'java';
+/** HIDDEN 不会落库：封榜期读接口对非本人的封榜后提交的打码值，赛后自动恢复真实状态 */
 export type JudgeStatus =
   | 'PENDING'
   | 'JUDGING'
@@ -11,7 +12,8 @@ export type JudgeStatus =
   | 'RE'
   | 'CE'
   | 'OLE'
-  | 'SE';
+  | 'SE'
+  | 'HIDDEN';
 
 export interface User {
   id: number;

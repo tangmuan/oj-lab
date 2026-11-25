@@ -51,6 +51,11 @@ export const STATUS_META: Record<JudgeStatus, { label: string; className: string
     className: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
     dot: 'bg-slate-500',
   },
+  HIDDEN: {
+    label: '封榜中',
+    className: 'bg-indigo-50 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300',
+    dot: 'bg-indigo-500',
+  },
 };
 
 export const DIFFICULTY_META: Record<Difficulty, { label: string; className: string }> = {
@@ -60,6 +65,9 @@ export const DIFFICULTY_META: Record<Difficulty, { label: string; className: str
 };
 
 export const STATUS_ORDER: JudgeStatus[] = ['AC', 'WA', 'TLE', 'MLE', 'RE', 'CE', 'OLE', 'SE', 'JUDGING', 'PENDING'];
+
+/** 封榜打码提交的补充说明：HIDDEN 不进 STATUS_ORDER（库里没有这个值，不能作为筛选条件） */
+export const HIDDEN_HINT = '结果赛后公布';
 
 /** 自测运行的返回状态（OK 表示正常跑完，不做答案比对） */
 export const RUN_STATUS_META: Record<RunStatus, { label: string; className: string }> = {

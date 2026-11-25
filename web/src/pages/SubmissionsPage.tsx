@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
 import type { Paginated, SubmissionSummary } from '../api/types';
 import { StatusBadge } from '../components/StatusBadge';
-import { formatDateTime, formatMemory, STATUS_ORDER } from '../lib/format';
+import { formatDateTime, formatMemory, HIDDEN_HINT, STATUS_ORDER } from '../lib/format';
 
 export function SubmissionsPage() {
   const [items, setItems] = useState<SubmissionSummary[]>([]);
@@ -101,6 +101,7 @@ export function SubmissionsPage() {
                 </td>
                 <td>
                   <StatusBadge status={s.status} />
+                  {s.status === 'HIDDEN' && <span className="ml-1 text-[10px] text-slate-400 dark:text-slate-500">{HIDDEN_HINT}</span>}
                 </td>
                 <td className="font-mono text-xs text-slate-500 dark:text-slate-400">{s.language}</td>
                 <td className="font-mono text-xs text-slate-500 dark:text-slate-400">{s.time_ms}ms</td>

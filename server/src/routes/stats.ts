@@ -1,7 +1,9 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { db } from '../db';
+import { optionalAuth } from '../middleware/auth';
 import { ah, notFound } from '../utils/errors';
+import { isSubmissionFrozen, loadFrozenWindows } from '../utils/contest';
 
 export const statsRouter = Router();
 
@@ -65,19 +67,40 @@ statsRouter.get(
 
 statsRouter.get(
   '/problems/:id',
+  optionalAuth,
   ah(async (req, res) => {
     const id = Number(req.params.id);
     const rows = db
       .prepare('SELECT status, COUNT(*) AS c FROM submissions WHERE problem_id = ? GROUP BY status')
       .all(id) as { status: string; c: number }[];
 
-    const recent = db
+    const recentRaw = db
       .prepare(
-        `SELECT s.id, s.status, s.language, s.time_ms, s.memory_kb, s.created_at, u.username
+        `SELECT s.id, s.user_id, s.status, s.language, s.time_ms, s.memory_kb, s.created_at, u.username
          FROM submissions s JOIN users u ON u.id = s.user_id
          WHERE s.problem_id = ? ORDER BY s.id DESC LIMIT 10`
       )
-      .all(id);
+      .all(id) as Array<{
+      id: number;
+      user_id: number;
+      status: string;
+      language: string;
+      time_ms: number;
+      memory_kb: number;
+      created_at: string;
+      username: string;
+    }>;
+
+    // 封榜期语义：他人（含匿名视角）看到的封榜后提交一律打码；本人与管理员不受影响
+    const viewer = req.user;
+    const windows = viewer?.role === 'admin' ? null : loadFrozenWindows(viewer?.role);
+    const recent = windows
+      ? recentRaw.map((r) => {
+          if (viewer && r.user_id === viewer.id) return r;
+          if (!isSubmissionFrozen(windows, id, r.created_at)) return r;
+          return { ...r, status: 'HIDDEN', time_ms: 0, memory_kb: 0 };
+        })
+      : recentRaw;
 
     res.json({ distribution: rows, recent });
   })
@@ -89,6 +112,7 @@ statsRouter.get(
  */
 statsRouter.get(
   '/users/:id',
+  optionalAuth,
   ah(async (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) throw notFound('用户不存在');
@@ -121,13 +145,32 @@ statsRouter.get(
       )
       .all(id) as { date: string; count: number }[];
 
-    const recent = db
+    const recentRaw = db
       .prepare(
         `SELECT s.id, s.problem_id, p.title AS problem_title, s.language, s.status, s.time_ms, s.memory_kb, s.created_at
          FROM submissions s JOIN problems p ON p.id = s.problem_id
          WHERE s.user_id = ? ORDER BY s.id DESC LIMIT 10`
       )
-      .all(id);
+      .all(id) as Array<{
+      id: number;
+      problem_id: number;
+      problem_title: string;
+      language: string;
+      status: string;
+      time_ms: number;
+      memory_kb: number;
+      created_at: string;
+    }>;
+
+    // 封榜期语义：看别人的主页时，封榜后提交一律打码；本人与管理员不受影响
+    const viewer = req.user;
+    const windows = viewer?.role === 'admin' ? null : loadFrozenWindows(viewer?.role);
+    const isSelf = viewer?.id === id;
+    const recent = windows && !isSelf
+      ? recentRaw.map((r) =>
+          isSubmissionFrozen(windows, r.problem_id, r.created_at) ? { ...r, status: 'HIDDEN', time_ms: 0, memory_kb: 0 } : r
+        )
+      : recentRaw;
 
     const submitCount = agg.submit_count ?? 0;
     const acCount = agg.ac_count ?? 0;

@@ -42,6 +42,69 @@ export function isFrozenForViewer(
   return now >= freezeMoment(contest);
 }
 
+/**
+ * 该比赛当前对该访问者处于封榜期时，返回封榜时刻；否则返回 null。
+ * 边界逻辑全部委托 isFrozenForViewer，避免出现第二套「管理员/解封/结束」判断。
+ */
+export function frozenSinceForViewer(
+  contest: Pick<ContestRow, 'end_at' | 'frozen_minutes' | 'unfrozen_at'>,
+  role: string | undefined,
+  now = nowSqlUtc()
+): string | null {
+  return isFrozenForViewer(contest, role, now) ? freezeMoment(contest) : null;
+}
+
+/**
+ * 判断「某道题在某条提交时间点上是否处于封榜期」：
+ * 同一题可能同时挂在多场比赛里，只要有一场当前处于封榜期、且提交发生在该场的
+ * 封榜时刻之后，结果就视为未公布（取最严格）。管理员永远 false。
+ * 判定口径与榜单一致：严格大于封榜时刻才算封榜提交（buildStandings 的 atMs > frozenMs）。
+ * 单发场景用；列表接口请用 loadFrozenWindows + isSubmissionFrozen，避免逐条回表的 N+1。
+ */
+export function isFrozenAt(problemId: number, createdAt: string, viewerRole: string | undefined, now = nowSqlUtc()): boolean {
+  const contests = db
+    .prepare(
+      `SELECT c.end_at, c.frozen_minutes, c.unfrozen_at
+       FROM contests c JOIN contest_problems cp ON cp.contest_id = c.id
+       WHERE cp.problem_id = ?`
+    )
+    .all(problemId) as Array<Pick<ContestRow, 'end_at' | 'frozen_minutes' | 'unfrozen_at'>>;
+  return contests.some((c) => {
+    const since = frozenSinceForViewer(c, viewerRole, now);
+    return since !== null && createdAt > since;
+  });
+}
+
+/**
+ * 一次性查出「当前所有封榜中的 (problem_id → 封榜时刻)」，供列表接口在 Node 侧用 Map 过滤。
+ * 同一题被多场封榜中的比赛覆盖时，取更早的封榜时刻（更严格：更多提交会被隐藏）。
+ * 管理员直接返回空 Map，调用方无需再判角色。
+ */
+export function loadFrozenWindows(viewerRole: string | undefined, now = nowSqlUtc()): Map<number, string> {
+  const map = new Map<number, string>();
+  if (viewerRole === 'admin') return map;
+  const rows = db
+    .prepare(
+      `SELECT cp.problem_id, c.end_at, c.frozen_minutes, c.unfrozen_at
+       FROM contests c JOIN contest_problems cp ON cp.contest_id = c.id
+       WHERE c.unfrozen_at IS NULL AND c.end_at > ? AND c.frozen_minutes > 0`
+    )
+    .all(now) as Array<{ problem_id: number } & Pick<ContestRow, 'end_at' | 'frozen_minutes' | 'unfrozen_at'>>;
+  for (const r of rows) {
+    const since = frozenSinceForViewer(r, viewerRole, now);
+    if (since === null) continue;
+    const prev = map.get(r.problem_id);
+    if (prev === undefined || since < prev) map.set(r.problem_id, since);
+  }
+  return map;
+}
+
+/** 基于 loadFrozenWindows 的逐条判定：提交发生在封榜时刻之后即隐藏 */
+export function isSubmissionFrozen(windows: Map<number, string>, problemId: number, createdAt: string): boolean {
+  const since = windows.get(problemId);
+  return since !== undefined && createdAt > since;
+}
+
 export interface StandingCell {
   problemId: number;
   status: 'AC' | 'WA' | 'FROZEN' | 'NONE';

@@ -9,7 +9,7 @@ import { authenticateStream, optionalAuth, requireAuth } from '../middleware/aut
 import { ProblemRow, SubmissionCaseRow, SubmissionRow } from '../types';
 import { ah, AppError, forbidden, notFound, unauthorized } from '../utils/errors';
 import { issueStreamTicket } from '../utils/streamTickets';
-import { nowSqlUtc } from '../utils/contest';
+import { nowSqlUtc, isSubmissionFrozen, loadFrozenWindows } from '../utils/contest';
 
 export const submissionsRouter = Router();
 
@@ -98,7 +98,22 @@ submissionsRouter.get(
 
     const total = (db.prepare(`SELECT COUNT(*) AS c FROM submissions s ${whereSql}`).get(...(params as never[])) as { c: number }).c;
 
-    const items = db
+    interface SubmissionListItem {
+      id: number;
+      user_id: number;
+      problem_id: number;
+      language: string;
+      status: string;
+      time_ms: number;
+      memory_kb: number;
+      pass_count: number;
+      total_count: number;
+      created_at: string;
+      username: string;
+      problem_title: string;
+    }
+
+    const rows = db
       .prepare(
         `SELECT s.id, s.user_id, s.problem_id, s.language, s.status, s.time_ms, s.memory_kb,
                 s.pass_count, s.total_count, s.created_at, u.username, p.title AS problem_title
@@ -109,7 +124,18 @@ submissionsRouter.get(
          ORDER BY s.id DESC
          LIMIT ? OFFSET ?`
       )
-      .all(...(params as never[]), q.pageSize, (q.page - 1) * q.pageSize);
+      .all(...(params as never[]), q.pageSize, (q.page - 1) * q.pageSize) as SubmissionListItem[];
+
+    // 封榜期语义：非本人（含匿名）看到的他人封榜后提交一律打码；本人与管理员不受影响。
+    // 封榜窗口一次性查出（Map），不在循环里逐条回表。
+    const windows = req.user?.role === 'admin' ? null : loadFrozenWindows(req.user?.role);
+    const items = windows
+      ? rows.map((r) => {
+          if (req.user && r.user_id === req.user.id) return r;
+          if (!isSubmissionFrozen(windows, r.problem_id, r.created_at)) return r;
+          return { ...r, status: 'HIDDEN', time_ms: 0, memory_kb: 0, pass_count: 0 };
+        })
+      : rows;
 
     res.json({ items, page: q.page, pageSize: q.pageSize, total, totalPages: Math.max(1, Math.ceil(total / q.pageSize)) });
   })

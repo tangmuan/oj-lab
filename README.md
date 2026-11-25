@@ -119,7 +119,7 @@ npm run start         # 默认 0.0.0.0:3001，启动日志会打印局域网地�
 - 判题结果：SSE 实时逐点结果（前端断线自动降级轮询），编译错误输出、样例差异提示；推送完成后服务端主动断流，并用 60 秒一次性 ticket 代替 URL 上的长期 token
 - 历史：我的提交列表（按状态筛选）、提交详情（代码只对本人/管理员可见）
 - 排名：通过题数榜（同分看提交次数）、通过率、最近提交时间
-- **比赛**：`/contests` 列表与详情、报名、10 分钟倒计时、实时榜单（首次 AC + 20 分钟/次罚时）；封榜期间非管理员只看到「?」，结束或手动解封后自动公布；比赛进行中禁止查看他人提交详情；未开始的比赛不下发题目
+- **比赛**：`/contests` 列表与详情、报名、10 分钟倒计时、实时榜单（首次 AC + 20 分钟/次罚时）；封榜期间非管理员只看到「?」，结束或手动解封后自动公布；比赛进行中禁止查看他人提交详情；未开始的比赛不下发题目。封榜语义同时覆盖提交列表与两个统计接口：非本人（含匿名）看到的他人封榜后提交一律显示 `HIDDEN`（封榜中，结果赛后公布），本人与管理员不受影响
 - 管理端：题目 CRUD、标签编辑、测试点增删改（样例标记）、可见性、提交列表、任意提交重判、用户角色调整
 - **批量重判**：按题目 / 状态 / 时间范围筛选，一次最多 500 条，必须勾选二次确认；只入队不阻塞接口，进度走 SSE（`/api/streams/batch/:id`）实时推送，断线可查状态接口
 - 安全：Zod 入参校验、密码 bcrypt、参数化 SQL、管理端接口双重鉴权、代码长度/输出体积上限、测试点提交总量上限 8MB
@@ -157,6 +157,7 @@ web/
 npm run check                            # 两端 tsc --noEmit（CI 必跑）
 npm run test:unit                        # 纯函数单测：输出比对 / Java 类名 / 前端格式化
 cd server && node scripts/smoke.mjs      # 9 项断言：5 语言 AC + WA + TLE + CE + RE
+cd server && node scripts/contest-freeze.mjs  # 封榜语义回归：三个读接口的打码 / 本人可见 / 管理员全量 / 赛后恢复（需先启动后端）
 cd web && node scripts/ui-check.mjs      # 登录→自测运行→提交→结果面板截图，收集控制台/HTTP 错误
 cd web && node scripts/ui-drafts.mjs     # 草稿箱：新建→自动保存→刷新恢复→即时刷新兜底→运行→删除
 cd web && node scripts/ui-templates.mjs  # 自定义模板：保存模板→新建文件自动套用→恢复默认
@@ -177,6 +178,7 @@ GET|PUT|DELETE /api/files/:id       # 打开 / 保存 / 删除
 GET  /api/templates                 # 我的自定义语言模板
 PUT|DELETE /api/templates/:language # 保存 / 恢复系统默认
 POST /api/submissions               GET /api/submissions?mine=1&problemId=&status=
+                                    # 封榜期：非本人（含匿名）看到的他人封榜后提交 status='HIDDEN'，耗时/内存/通过点置 0
 GET  /api/submissions/:id
 GET  /api/submissions?userId=&beforeId=   # 提交对比定位相邻记录（userId 仅本人或管理员）
 POST /api/submissions/:id/stream-ticket   # 换 60 秒一次性 SSE 票据
@@ -187,7 +189,7 @@ GET  /api/contests                  GET /api/contests/:id     # 比赛列表 / �
 POST|DELETE /api/contests/:id/register    # 报名 / 取消报名
 GET  /api/contests/:id/standings    # 实时榜单（封榜时对非管理员隐藏结果）
 GET  /api/stats/overview            GET /api/stats/leaderboard
-GET  /api/stats/problems/:id        GET /api/stats/users/:id   # 个人主页（含 26 周热力图数据）
+GET  /api/stats/problems/:id        GET /api/stats/users/:id   # 个人主页（含 26 周热力图数据）；recent 列表同样遵守封榜期 HIDDEN 语义
 管理端（需 admin）
 GET|POST /api/admin/problems        GET|PUT|DELETE /api/admin/problems/:id
 GET|POST /api/admin/problems/:id/testcases
@@ -229,6 +231,7 @@ GET  /api/streams/batch/:id?ticket=                # 批量重判进度 SSE（�
 10. **SPJ 的 stderr 会原样给学生看。** 这是「说清楚为什么错」的代价：checker 如果把标准答案写进 stderr，等于泄露测试点。写 checker 时要像写报错信息一样克制（只给误差数值或判定依据）。
 11. **checker 与选手代码共用一个沙箱。** checker 同样没有真正的隔离，只适合本地教学环境。
 12. **批量重判的进度存在进程内存。** 服务重启后批次记录消失（提交本身仍会继续判完）；单次上限 500 条，更大的量应该拆成多批或改用独立任务系统。
+13. **封榜只打码逐条结果，聚合计数仍然可见。** 题目列表的通过率/AC 数、题目与个人统计的 distribution、总榜的 solved 数都把封榜期提交计入，有心人可以结合「封榜中」标记间接推断结果；完整隐藏需要把这些聚合也按封榜窗口过滤。
 
 ## 后续可做
 

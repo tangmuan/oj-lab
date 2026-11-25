@@ -55,6 +55,10 @@ export function ResultPanel({ status, cases, timeMs = 0, memoryKb = 0, passCount
         </div>
       </div>
 
+      {status === 'HIDDEN' && (
+        <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">封榜中，结果赛后公布。耗时 / 内存 / 通过点已临时隐藏。</p>
+      )}
+
       {cases.length > 0 && (
         <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
           {cases.map((c) => {

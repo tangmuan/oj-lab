@@ -4,7 +4,7 @@ import { api, ApiError } from '../api/client';
 import type { JudgeStatus, UserProfile } from '../api/types';
 import { SubmissionHeatmap } from '../components/SubmissionHeatmap';
 import { StatusBadge } from '../components/StatusBadge';
-import { formatDateTime, formatMemory, STATUS_META } from '../lib/format';
+import { formatDateTime, formatMemory, HIDDEN_HINT, STATUS_META } from '../lib/format';
 
 const BAR_COLOR: Record<JudgeStatus, string> = {
   PENDING: 'bg-slate-300 dark:bg-slate-600',
@@ -17,6 +17,7 @@ const BAR_COLOR: Record<JudgeStatus, string> = {
   CE: 'bg-slate-400 dark:bg-slate-500',
   OLE: 'bg-orange-400',
   SE: 'bg-slate-300 dark:bg-slate-600',
+  HIDDEN: 'bg-indigo-400',
 };
 
 export function UserProfilePage() {
@@ -143,6 +144,7 @@ export function UserProfilePage() {
                 <tr key={s.id}>
                   <td>
                     <StatusBadge status={s.status} />
+                    {s.status === 'HIDDEN' && <span className="ml-1 text-[10px] text-slate-400 dark:text-slate-500">{HIDDEN_HINT}</span>}
                   </td>
                   <td>
                     <Link

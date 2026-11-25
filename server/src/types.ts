@@ -1,6 +1,7 @@
 export type Role = 'user' | 'admin';
 export type Difficulty = 'easy' | 'medium' | 'hard';
-export type JudgeStatus = 'PENDING' | 'JUDGING' | 'AC' | 'WA' | 'TLE' | 'MLE' | 'RE' | 'CE' | 'OLE' | 'SE';
+/** HIDDEN 不会落库：它是封榜期读接口对「非本人的封榜后提交」的打码值，赛后自动恢复真实状态 */
+export type JudgeStatus = 'PENDING' | 'JUDGING' | 'AC' | 'WA' | 'TLE' | 'MLE' | 'RE' | 'CE' | 'OLE' | 'SE' | 'HIDDEN';
 
 export type LanguageId = 'python' | 'node' | 'c' | 'cpp' | 'java';
 
