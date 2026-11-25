@@ -68,10 +68,39 @@ CREATE TABLE IF NOT EXISTS submission_cases (
   time_ms       INTEGER NOT NULL DEFAULT 0,
   memory_kb     INTEGER NOT NULL DEFAULT 0,
   is_sample     INTEGER NOT NULL DEFAULT 0,
-  message       TEXT
+  message       TEXT,
+  -- 逐点差异（JSON，仅 WA 且有差异时非空）：SSE 轮询在判题中途就要下发，
+  -- 不能等 submissions.detail 在判完后一次性写入
+  first_diff    TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_subcases_submission ON submission_cases(submission_id);
+
+-- 判题队列：跨进程持久化（API 进程入队，worker 进程轮询认领）。
+-- 行存在 = 任务待消费或已被认领；claimed_by 非空表示被某 worker 实例认领，
+-- worker 崩溃后启动时把所有认领作废即可恢复，不需要超时机制。
+CREATE TABLE IF NOT EXISTS judge_queue (
+  submission_id INTEGER PRIMARY KEY REFERENCES submissions(id) ON DELETE CASCADE,
+  claimed_by    TEXT,
+  claimed_at    TEXT,
+  enqueued_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- 批量重判批次：重启后仍可查询进度。done 不落库，
+-- 直接用 total - 剩余 item 数推导，天然幂等，不依赖任何增量更新。
+CREATE TABLE IF NOT EXISTS rejudge_batches (
+  id         TEXT PRIMARY KEY,
+  total      INTEGER NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS rejudge_batch_items (
+  batch_id      TEXT NOT NULL REFERENCES rejudge_batches(id) ON DELETE CASCADE,
+  submission_id INTEGER NOT NULL,
+  PRIMARY KEY (batch_id, submission_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_batch_items_submission ON rejudge_batch_items(submission_id);
 
 -- 草稿箱：用户自建的代码文件，实时保存、可重新打开
 CREATE TABLE IF NOT EXISTS user_files (

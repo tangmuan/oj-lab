@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { db } from '../db';
-import { enqueueSubmission, judgeEvents } from '../judge';
+import { enqueueSubmission } from '../judge/queue';
 import { createRejudgeBatch, getBatch, MAX_BATCH_SIZE } from '../judge/batch';
 import { issueStreamTicket } from '../utils/streamTickets';
 import { openSse } from '../utils/sse';
@@ -144,17 +144,23 @@ adminRouter.post(
   '/submissions/:id/rejudge',
   ah(async (req, res) => {
     const id = Number(req.params.id);
-    const sub = db.prepare('SELECT id FROM submissions WHERE id = ?').get(id);
+    const sub = db.prepare('SELECT id, status FROM submissions WHERE id = ?').get(id) as
+      | { id: number; status: string }
+      | undefined;
     if (!sub) throw notFound('提交记录不存在');
+    // 判题已拆到 worker 进程，API 无法「等它判完」再 reset：
+    // 在判提交被 reset 会丢掉已落的逐点结果，且置 PENDING 后会被队列重复消费，直接拒绝
+    if (sub.status === 'JUDGING') throw badRequest('该提交正在判题中，请等判题完成后再重判');
 
     db.transaction(() => {
       db.prepare('DELETE FROM submission_cases WHERE submission_id = ?').run(id);
       db.prepare(
         "UPDATE submissions SET status = 'PENDING', time_ms = 0, memory_kb = 0, pass_count = 0, total_count = 0, compile_msg = NULL, detail = NULL, judged_at = NULL WHERE id = ?"
       ).run(id);
+      // 入队放同一事务：保证「重置生效时任务一定已在队列里」，不会出现重置完却丢了任务
+      enqueueSubmission(id);
     })();
 
-    enqueueSubmission(id);
     res.json({ ok: true, id, status: 'PENDING' });
   })
 );
@@ -195,13 +201,11 @@ adminRouter.post(
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
-    const ids = (
-      db
-        .prepare(`SELECT id FROM submissions ${whereSql} ORDER BY id ASC LIMIT ?`)
-        .all(...(params as never[]), q.limit) as Array<{ id: number }>
-    ).map((r) => r.id);
+    const rows = db
+      .prepare(`SELECT id, status FROM submissions ${whereSql} ORDER BY id ASC LIMIT ?`)
+      .all(...(params as never[]), q.limit) as Array<{ id: number; status: string }>;
 
-    if (ids.length === 0) {
+    if (rows.length === 0) {
       res.json({ batchId: null, total: 0 });
       return;
     }
@@ -210,15 +214,20 @@ adminRouter.post(
     const reset = db.prepare(
       "UPDATE submissions SET status = 'PENDING', time_ms = 0, memory_kb = 0, pass_count = 0, total_count = 0, compile_msg = NULL, detail = NULL, judged_at = NULL WHERE id = ?"
     );
-    db.transaction(() => {
-      for (const id of ids) {
-        clearCases.run(id);
-        reset.run(id);
+    // reset、入队、批次登记放进同一事务：批次对查询可见时，重置一定已生效且任务一定已在队列里
+    // （createRejudgeBatch 内部的事务在嵌套时会自动降级为 savepoint）
+    const batch = db.transaction(() => {
+      for (const row of rows) {
+        // 正在判题的提交不动：它判完时 settleBatchItems 会自动把批次 item 结算掉；
+        // 若强行 reset 会丢已落库的逐点结果，置 PENDING 后还会被队列重复消费
+        if (row.status === 'JUDGING') continue;
+        clearCases.run(row.id);
+        reset.run(row.id);
+        enqueueSubmission(row.id);
       }
+      return createRejudgeBatch(rows.map((r) => r.id));
     })();
 
-    // 只入队，不同步判：500 条同步跑会把接口挂死
-    const batch = createRejudgeBatch(ids);
     res.json({ batchId: batch.id, total: batch.total });
   })
 );

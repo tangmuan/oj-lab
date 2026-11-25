@@ -13,7 +13,10 @@ export const config = {
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
   dbPath: process.env.DB_PATH || path.join(root, 'data', 'oj.db'),
   judgeWorkDir: process.env.JUDGE_WORK_DIR || path.join(root, 'data', 'judge'),
-  judgeConcurrency: Number(process.env.JUDGE_CONCURRENCY || 2),
+  /** 判题 worker 并发数；兼容旧的 JUDGE_CONCURRENCY 名字 */
+  judgeWorkers: Number(process.env.JUDGE_WORKERS || process.env.JUDGE_CONCURRENCY || 2),
+  /** 1（默认）= API 进程内联跑一个 worker，零配置可用；0 = 分离模式，由 npm run judge 独立消费 */
+  judgeInline: process.env.JUDGE_INLINE !== '0',
   submitCooldownSec: Number(process.env.SUBMIT_COOLDOWN_SEC || 5),
   runCooldownMs: Number(process.env.RUN_COOLDOWN_MS || 2000),
   corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:5173',

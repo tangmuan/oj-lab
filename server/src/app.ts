@@ -15,7 +15,7 @@ import { templatesRouter } from './routes/templates';
 import { contestsRouter } from './routes/contests';
 import { streamsRouter } from './routes/streams';
 import { LANGUAGES } from './judge/languages';
-import { queueStats } from './judge';
+import { queueStats } from './judge/queue';
 
 export function createApp() {
   const app = express();

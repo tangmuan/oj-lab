@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { config } from '../config';
 import { db } from '../db';
-import { enqueueSubmission, judgeEvents } from '../judge';
+import { enqueueSubmission } from '../judge/queue';
 import type { FirstDiff } from '../judge/comparator';
 import { isLanguageId } from '../judge/languages';
 import { authenticateStream, optionalAuth, requireAuth } from '../middleware/auth';
@@ -230,6 +230,19 @@ submissionsRouter.post(
   })
 );
 
+/** first_diff 列存的是 JSON 字符串，空值为 NULL；坏数据按缺失处理不让流断掉 */
+function parseDiff(raw: string | null): FirstDiff | null {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as FirstDiff;
+  } catch {
+    return null;
+  }
+}
+
+const LIVE_CASE_SQL =
+  'SELECT case_index, status, time_ms, memory_kb, is_sample, message, first_diff FROM submission_cases WHERE submission_id = ?';
+
 submissionsRouter.get(
   '/:id/stream',
   ah(async (req, res) => {
@@ -252,6 +265,7 @@ submissionsRouter.get(
 
     let closed = false;
     let heartbeat: NodeJS.Timeout | null = null;
+    let pollTimer: NodeJS.Timeout | null = null;
 
     // 收尾必须只做一次：done 主动结束时与客户端断开时都会走到这里
     const cleanup = (): void => {
@@ -259,7 +273,10 @@ submissionsRouter.get(
         clearInterval(heartbeat);
         heartbeat = null;
       }
-      judgeEvents.off(`sub:${id}`, listener);
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
     };
 
     const finish = (): void => {
@@ -274,28 +291,73 @@ submissionsRouter.get(
       res.write(`data: ${JSON.stringify(payload)}\n\n`);
     };
 
-    const listener = (payload: unknown): void => {
-      if (closed) return;
-      send(payload);
-      // 判题已收尾，服务端主动断流，客户端不必再等心跳或依赖自己 close
-      if ((payload as { type?: string }).type === 'done') finish();
-    };
-
-    const cases = db
-      .prepare(
-        'SELECT case_index, status, time_ms, memory_kb, is_sample, message FROM submission_cases WHERE submission_id = ? ORDER BY case_index ASC'
-      )
-      .all(id) as Pick<SubmissionCaseRow, 'case_index' | 'status' | 'time_ms' | 'memory_kb' | 'is_sample' | 'message'>[];
+    /**
+     * 判题已经拆到独立 worker 进程，同进程 EventEmitter 收不到了；
+     * 改为轮询库里的增量（逐点结果行 + 提交状态），事件 payload 与旧实现逐字段一致。
+     */
+    const caseRows = db.prepare(`${LIVE_CASE_SQL} ORDER BY case_index ASC`).all(id) as Array<
+      Pick<SubmissionCaseRow, 'case_index' | 'status' | 'time_ms' | 'memory_kb' | 'is_sample' | 'message'> & { first_diff: string | null }
+    >;
+    const cases = caseRows.map((c) => ({ ...c, first_diff: parseDiff(c.first_diff) }));
 
     send({ type: 'snapshot', submissionId: id, status: sub.status, cases });
 
-    if (!['PENDING', 'JUDGING'].includes(sub.status)) {
-      send({ type: 'done', submissionId: id, status: sub.status });
+    const toDone = (row: SubmissionRow): void => {
+      send({
+        type: 'done',
+        submissionId: id,
+        status: row.status,
+        timeMs: row.time_ms,
+        memoryKb: row.memory_kb,
+        passCount: row.pass_count,
+        totalCount: row.total_count,
+        compileMsg: row.compile_msg,
+      });
       finish();
+    };
+
+    if (!['PENDING', 'JUDGING'].includes(sub.status)) {
+      toDone(sub);
       return;
     }
 
-    judgeEvents.on(`sub:${id}`, listener);
+    let lastCaseIndex = cases.length > 0 ? cases[cases.length - 1].case_index : 0;
+    let lastStatus = sub.status;
+
+    pollTimer = setInterval(() => {
+      if (closed) return;
+      const row = db.prepare('SELECT * FROM submissions WHERE id = ?').get(id) as SubmissionRow | undefined;
+      if (!row) {
+        finish();
+        return;
+      }
+      if (row.status !== lastStatus) {
+        lastStatus = row.status;
+        send({ type: 'status', submissionId: id, status: row.status });
+      }
+      const fresh = db.prepare(`${LIVE_CASE_SQL} AND case_index > ? ORDER BY case_index ASC`).all(id, lastCaseIndex) as Array<
+        Pick<SubmissionCaseRow, 'case_index' | 'status' | 'time_ms' | 'memory_kb' | 'is_sample' | 'message'> & { first_diff: string | null }
+      >;
+      for (const c of fresh) {
+        send({
+          type: 'case',
+          submissionId: id,
+          case: {
+            case_index: c.case_index,
+            status: c.status,
+            time_ms: c.time_ms,
+            memory_kb: c.memory_kb,
+            is_sample: c.is_sample,
+            message: c.message,
+            first_diff: parseDiff(c.first_diff),
+          },
+        });
+        lastCaseIndex = c.case_index;
+      }
+      // 终态：补完剩余用例事件再收流，保证前端案例列表完整
+      if (!['PENDING', 'JUDGING'].includes(row.status)) toDone(row);
+    }, 300);
+
     heartbeat = setInterval(() => {
       if (!closed && !res.writableEnded) res.write(': ping\n\n');
     }, 15000);

@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import { judgeEvents } from '../judge';
 import { getBatch } from '../judge/batch';
 import { loadUserById } from '../middleware/auth';
 import { forbidden, notFound, unauthorized } from '../utils/errors';
@@ -26,25 +25,31 @@ streamsRouter.get('/batch/:batchId', (req, res) => {
   if (!batch) throw notFound('批次不存在或已过期');
 
   const sse = openSse(res);
-  const push = () =>
-    sse.send({
-      type: 'progress',
-      batchId: batch.id,
-      done: batch.done,
-      total: batch.total,
-      finished: batch.finished,
-    });
-  push();
+  const push = (b: NonNullable<ReturnType<typeof getBatch>>) =>
+    sse.send({ type: 'progress', batchId: b.id, done: b.done, total: b.total, finished: b.finished });
+  push(batch);
 
   if (batch.finished) {
     sse.finish();
     return;
   }
 
-  const listener = (payload: unknown) => {
-    sse.send(payload);
-    if ((payload as { finished?: boolean }).finished) sse.finish();
-  };
-  judgeEvents.on(`batch:${batchId}`, listener);
-  sse.onClose(() => judgeEvents.off(`batch:${batchId}`, listener));
+  // 批次进度存在 SQLite（worker 判完一条删一条 item），跨进程可见：
+  // 这里轮询表推导 done，进度变化才下发，payload 与旧事件实现一致
+  const timer = setInterval(() => {
+    const latest = getBatch(batchId);
+    if (!latest) {
+      // 批次过期被清理（TTL 2 小时）：断流让前端走轮询兜底
+      clearInterval(timer);
+      sse.finish();
+      return;
+    }
+    push(latest);
+    if (latest.finished) {
+      clearInterval(timer);
+      sse.finish();
+    }
+  }, 500);
+
+  sse.onClose(() => clearInterval(timer));
 });

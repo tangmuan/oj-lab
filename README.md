@@ -91,16 +91,29 @@ npm run start         # 默认 0.0.0.0:3001，启动日志会打印局域网地�
 ## 判题流水线
 
 ```
-提交 → 入库(PENDING) → 内存队列 → Worker
+提交 → 入库(PENDING) + 写入 SQLite 判题队列 → worker 进程认领
   → 落盘源码 → 编译/语法检查（失败=CE）
   → 预热执行（规避 Windows Defender 首次扫描导致误判 TLE）
   → 逐测试点运行：stdin 注入、stdout 捕获、超时/超内存/超输出强杀进程树
   → 输出比对（归一化行尾与行末空白）；题目配了 checker 时改由 checker 判定
   → 首个非 AC 即终止后续测试点
-  → 逐点写库 + SSE 推送 → 汇总最终状态
+  → 逐点写 submission_cases → API 侧轮询该表经 SSE 推送 → 汇总最终状态
 ```
 
 状态码：`AC` `WA` `TLE` `MLE` `RE` `CE` `OLE`（输出超限）`SE`（系统错误）。
+
+## 判题进程
+
+判题与 API 是两个角色，通过 `judge_queue` SQLite 表衔接（API 入队、worker 轮询认领，SQLite 写锁保证不会重复消费），单机零外部依赖：
+
+| 模式 | 启动方式 | 说明 |
+| --- | --- | --- |
+| 内联（默认） | `npm start` / `npm run dev` | 不设任何环境变量时 API 进程内自带一个 worker，零配置可用；启动日志会标明「内联 worker」 |
+| 分离 | `JUDGE_INLINE=0 npm start` + `npm run judge` | API 只入队，判题由独立进程消费；`JUDGE_WORKERS` 控制 worker 并发（默认 2，兼容旧名 `JUDGE_CONCURRENCY`） |
+
+- **崩溃恢复**：worker 启动时自动作废全部残留认领、把中断的 `JUDGING` 提交打回 `PENDING` 并补进队列，不会出现永久 JUDGING；worker 收到 SIGINT/SIGTERM 会先等当前提交判完再退出（再按一次 Ctrl+C 强制退出，残留由下次启动恢复）。
+- **进度可见**：逐点结果写 `submission_cases`（含 `first_diff`），批量重判批次写 `rejudge_batches` 两表——API 的 SSE 改为轮询这两张表推增量，事件格式与旧的进程内事件完全一致，API 或 worker 任意一方重启都不丢进度。
+- 生产构建后 worker 入口是 `node dist/judge/worker-cli.js`（`npm run judge` 是开发快捷方式）。
 
 ## 功能清单
 
@@ -121,7 +134,7 @@ npm run start         # 默认 0.0.0.0:3001，启动日志会打印局域网地�
 - 排名：通过题数榜（同分看提交次数）、通过率、最近提交时间
 - **比赛**：`/contests` 列表与详情、报名、10 分钟倒计时、实时榜单（首次 AC + 20 分钟/次罚时）；封榜期间非管理员只看到「?」，结束或手动解封后自动公布；比赛进行中禁止查看他人提交详情；未开始的比赛不下发题目。封榜语义同时覆盖提交列表与两个统计接口：非本人（含匿名）看到的他人封榜后提交一律显示 `HIDDEN`（封榜中，结果赛后公布），本人与管理员不受影响
 - 管理端：题目 CRUD、标签编辑、测试点增删改（样例标记）、可见性、提交列表、任意提交重判、用户角色调整
-- **批量重判**：按题目 / 状态 / 时间范围筛选，一次最多 500 条，必须勾选二次确认；只入队不阻塞接口，进度走 SSE（`/api/streams/batch/:id`）实时推送，断线可查状态接口
+- **批量重判**：按题目 / 状态 / 时间范围筛选，一次最多 500 条，必须勾选二次确认；只入队不阻塞接口，进度走 SSE（`/api/streams/batch/:id`）实时推送，断线自动降级为 1.5s 轮询状态接口；批次记录持久化在 SQLite，API 或 worker 重启后进度仍可查询、批次照常收敛
 - 安全：Zod 入参校验、密码 bcrypt、参数化 SQL、管理端接口双重鉴权、代码长度/输出体积上限、测试点提交总量上限 8MB
 
 ## 目录结构
@@ -214,7 +227,8 @@ GET  /api/streams/batch/:id?ticket=                # 批量重判进度 SSE（�
 | JWT_SECRET | dev-only-secret-change-me | 生产必须替换 |
 | DB_PATH | data/oj.db | SQLite 文件路径 |
 | JUDGE_WORK_DIR | data/judge | 判题临时目录（跑完即删） |
-| JUDGE_CONCURRENCY | 2 | 并发判题数 |
+| JUDGE_INLINE | 1 | 1 = API 进程内联一个 worker（零配置）；0 = 分离模式，API 只入队，需另跑 `npm run judge` |
+| JUDGE_WORKERS | 2（兼容旧名 JUDGE_CONCURRENCY） | 判题 worker 并发数 |
 | SUBMIT_COOLDOWN_SEC | 5（本地 .env 设为 1） | 同一用户提交间隔 |
 | RUN_COOLDOWN_MS | 2000 | 同一用户自测运行间隔（毫秒） |
 | CORS_ORIGIN | http://localhost:5173 | 允许的前端来源 |
@@ -223,15 +237,15 @@ GET  /api/streams/batch/:id?ticket=                # 批量重判进度 SSE（�
 
 1. **沙箱不是安全隔离。** 子进程 + 资源限制只能防「跑太久/吃太多内存」，挡不住恶意代码读文件、联网、fork 炸弹。仅适合本地教学/内部使用；用于公网必须换 Docker/gVisor/nsjail 等隔离方案（`judge/languages.ts` 与 `judge/runner.ts` 已抽象，替换成本可控）。
 2. **内存是采样值，不是 cgroup 精确值。** Windows 无 cgroup，靠每 120ms 轮询 `tasklist` 的工作集，几十毫秒就跑完的 C/C++ 程序可能采不到，界面显示 `—`（鼠标悬停有说明）；MLE 判定对长时间运行的程序才准确。
-3. **判题在 API 进程内。** 提交量上来会拖慢接口，生产应把 judge 拆成独立进程/服务，队列换成 Redis/BullMQ。
-4. **C++ 万能头 shim。** 本机 MinGW 8.1 的 `<bits/stdc++.h>` 会引入残缺的 `<filesystem>`，C++17 下必然编译失败；`judge-include/bits/stdc++.h` 提供了跳过 `<filesystem>` 的等价头，判题时用 `-I` 优先命中。换用 GCC 9+ 后可直接删掉该目录。
-5. **题面 HTML 未做 sanitize。** 题面仅管理员可写，若开放给普通用户出题，需要接入 DOMPurify。
-6. **JWT 存 localStorage。** 简单直接，但存在 XSS 窃取风险；更高安全要求应改用 httpOnly Cookie + CSRF token。SSE 已经不再把 JWT 放 URL，改用 60 秒一次性 ticket。
-7. **SSE ticket 存在进程内存。** 单实例部署没问题；若将来多副本负载均衡，票据需要放到 Redis 等共享存储，否则换票与建连可能落到不同进程。
-8. **热力图按 UTC 日期聚合。** 与 `created_at` 的存储口径一致；北京时间凌晨 0–8 点的提交会算到前一天。
-9. **代码 diff 有规模上限。** 单侧超过 1500 行时降级成「整段删除 + 整段新增」，不再做 LCS（DP 表太占内存），行号仍然正确。
-10. **checker 与选手代码共用一个沙箱。** checker 同样没有真正的隔离，只适合本地教学环境。
-11. **批量重判的进度存在进程内存。** 服务重启后批次记录消失（提交本身仍会继续判完）；单次上限 500 条，更大的量应该拆成多批或改用独立任务系统。
+3. **C++ 万能头 shim。** 本机 MinGW 8.1 的 `<bits/stdc++.h>` 会引入残缺的 `<filesystem>`，C++17 下必然编译失败；`judge-include/bits/stdc++.h` 提供了跳过 `<filesystem>` 的等价头，判题时用 `-I` 优先命中。换用 GCC 9+ 后可直接删掉该目录。
+4. **题面 HTML 未做 sanitize。** 题面仅管理员可写，若开放给普通用户出题，需要接入 DOMPurify。
+5. **JWT 存 localStorage。** 简单直接，但存在 XSS 窃取风险；更高安全要求应改用 httpOnly Cookie + CSRF token。SSE 已经不再把 JWT 放 URL，改用 60 秒一次性 ticket。
+6. **SSE ticket 存在进程内存。** 单实例部署没问题；若将来多副本负载均衡，票据需要放到 Redis 等共享存储，否则换票与建连可能落到不同进程。
+7. **热力图按 UTC 日期聚合。** 与 `created_at` 的存储口径一致；北京时间凌晨 0–8 点的提交会算到前一天。
+8. **代码 diff 有规模上限。** 单侧超过 1500 行时降级成「整段删除 + 整段新增」，不再做 LCS（DP 表太占内存），行号仍然正确。
+9. **checker 与选手代码共用一个沙箱。** checker 同样没有真正的隔离，只适合本地教学环境。
+10. **判题队列按单 worker 进程设计。** 队列与批次都已持久化到 SQLite，跨进程安全；但 worker 的崩溃恢复按「全库残留认领作废」处理，如果同时跑多个 worker 进程，一个崩溃启动会把另一个正在判的提交打回 PENDING 重判。多实例负载均衡需要引入认领超时或改用 Redis 队列。
+11. **SQLite 写锁会阻塞事件循环。** better-sqlite3 是同步驱动，API 与 worker 并发写同一个库时靠 busy_timeout（5s）排队等待，极端情况下 API 请求会被写锁拖住；写入量再大就该考虑把 DB 拆开或换异步驱动。
 12. **封榜只打码逐条结果，聚合计数仍然可见。** 题目列表的通过率/AC 数、题目与个人统计的 distribution、总榜的 solved 数都把封榜期提交计入，有心人可以结合「封榜中」标记间接推断结果；完整隐藏需要把这些聚合也按封榜窗口过滤。
 13. **比赛窗口可见性只管「读题」，聚合与提交入口仍有残留。** 规则：题目可见 = is_public 且不是「挂了比赛但所有关联比赛都未开赛」（管理员例外，任意关联比赛开赛后恢复；无比赛的题不受影响）。该规则已覆盖题目列表与详情（404），但仍有间接泄露面：标签云计数、题目统计接口的 distribution、以及 `/api/run` 与 `POST /api/submissions` 对未开赛题目的提交未被拦（知道 id 的用户可盲提交试错，但读不到题面与样例）；此外题目列表的通过率/提交数统计也不区分比赛窗口。
 
@@ -239,5 +253,5 @@ GET  /api/streams/batch/:id?ticket=                # 批量重判进度 SSE（�
 
 - 交互题、多文件提交
 - 题单（把标签组合成学习路径）
-- judge 服务化 + Docker 沙箱、判题机水平扩容
+- Docker 沙箱（进程已分离，下一步是隔离）、判题机水平扩容（多 worker 实例需要认领超时或换 Redis 队列，见已知限制 10）
 - 单元测试扩展到判题流程与路由层（当前覆盖纯函数 + 端到端冒烟）

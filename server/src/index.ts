@@ -4,13 +4,21 @@ import path from 'path';
 import { createApp } from './app';
 import { config } from './config';
 import { initDb } from './db';
-import { recoverPending } from './judge';
+import { startWorker, WorkerHandle } from './judge/worker';
 
 initDb();
 const app = createApp();
 
-const requeued = recoverPending();
-if (requeued > 0) console.log(`[oj-server] requeued ${requeued} interrupted submission(s)`);
+// 判题 worker：默认内联在 API 进程里（零配置可用）；
+// 设 JUDGE_INLINE=0 后由 npm run judge 独立消费，API 只负责入队。
+// 恢复逻辑在 worker 启动里做，API 启动不碰 JUDGING，避免打断分离 worker 正在判的提交。
+let worker: WorkerHandle | null = null;
+if (config.judgeInline) {
+  worker = startWorker({ concurrency: config.judgeWorkers, label: 'inline' });
+}
+const judgeMode = config.judgeInline
+  ? `内联 worker（并发 ${config.judgeWorkers}）；分离部署请设 JUDGE_INLINE=0 并运行 npm run judge`
+  : '分离模式（本进程不判题，请运行 npm run judge 启动 worker，JUDGE_WORKERS 控制并发）';
 
 function lanAddresses(): string[] {
   const out: string[] = [];
@@ -34,12 +42,14 @@ const server = app.listen(config.port, config.host, () => {
   }
   console.log(`[oj-server] 前端静态资源: ${hasWeb ? `已托管 ${config.webDist}` : '未找到 web/dist（开发模式请用 vite dev server）'}`);
   console.log(`[oj-server] db: ${config.dbPath}`);
-  console.log(`[oj-server] judge: concurrency=${config.judgeConcurrency}, workdir=${config.judgeWorkDir}`);
+  console.log(`[oj-server] 判题模式: ${judgeMode}`);
 });
 
 const shutdown = () => {
   console.log('[oj-server] shutting down');
-  server.close(() => process.exit(0));
+  // 先停 worker（等当前提交判完，不留 JUDGING），再关 HTTP
+  const stopped = worker ? worker.stop() : Promise.resolve();
+  stopped.then(() => server.close(() => process.exit(0)));
   setTimeout(() => process.exit(0), 3000).unref();
 };
 process.on('SIGINT', shutdown);
