@@ -111,7 +111,7 @@ const CHECKER_STDERR_LIMIT = 400;
 
 export interface CheckerOutcome {
   ok: boolean;
-  /** 截断后的 checker stderr，用于告诉学生「为什么判错」 */
+  /** 截断后的 checker stderr（含异常状态）；调用方只能把它展示在样例测试点上，隐藏测试点必须丢弃 */
   message: string | null;
 }
 

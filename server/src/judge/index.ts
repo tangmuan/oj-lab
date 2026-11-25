@@ -206,8 +206,13 @@ async function judgeOne(submissionId: number): Promise<void> {
         const rawDiff = status === 'WA' && !checker ? firstDiff(run.stdout, tc.expected_output) : null;
         // 非样例只回位置、不回数据：否则学生能靠差异提示反推隐藏测试点内容
         const diff = rawDiff && !isSample ? { ...rawDiff, actualLine: null, expectedLine: null } : rawDiff;
+        // checker 的 stderr 可能包含期望值等判定依据，只在样例上展示（学生能自己复现）；
+        // 隐藏测试点一律只回固定文案，避免 checker 把答案打进 stderr 造成泄题。
+        // 在源头（构造 message 时）就按样例过滤，落库 / detail / SSE 三条路径自动同规则
         const message = checkerMessage
-          ? `评测器判为错误：${checkerMessage}`
+          ? isSample
+            ? `评测器判为错误：${checkerMessage}`
+            : '评测器判为错误'
           : caseMessage(status, isSample, run.stdout, tc.expected_output, run, diff);
 
         const cr: CaseResult = {

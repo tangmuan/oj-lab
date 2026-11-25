@@ -334,7 +334,7 @@ export function AdminProblemEditPage() {
               }
             />
             <p className="mt-1.5 text-xs text-slate-400 dark:text-slate-500">
-              依次从 argv 拿到 input.txt / output.txt / answer.txt；stdout 首行为 AC 或退出码 0 视为通过，stderr 会作为错因展示给学生
+              依次从 argv 拿到 input.txt / output.txt / answer.txt；stdout 首行为 AC 或退出码 0 视为通过。stderr 只会展示在样例测试点上，隐藏测试点一律只显示「评测器判为错误」，请不要把答案类信息以外的东西依赖在 stderr 里
             </p>
           </div>
         )}
