@@ -1,7 +1,8 @@
 import { db } from '../db';
 import { JudgeStatus, ProblemRow, SubmissionRow, TestcaseRow } from '../types';
 import { FirstDiff, firstDiff, isSameOutput, truncate } from './comparator';
-import { buildProgram, BuiltProgram, removeDir, runChecker, runOnce } from './exec';
+import { BuiltProgram } from './executor';
+import { getExecutor } from './executor-factory';
 import { isLanguageId, LANGUAGES } from './languages';
 import { releaseClaim, settleBatchItems } from './queue';
 import { RunResult } from './runner';
@@ -83,13 +84,14 @@ export async function judgeOne(submissionId: number, workerId: string): Promise<
   let maxTime = 0;
   let maxMem = 0;
   const results: CaseResult[] = [];
+  const exec = getExecutor();
   let built: BuiltProgram | null = null;
   let checker: BuiltProgram | null = null;
   const checkerCode = problem.checker_code?.trim() ?? '';
   const checkerLanguage = isLanguageId(problem.checker_language) ? problem.checker_language : 'cpp';
 
   try {
-    built = await buildProgram({
+    built = await exec.build({
       code: sub.code,
       language: sub.language,
       memoryLimitMb: problem.memory_limit_mb,
@@ -103,7 +105,7 @@ export async function judgeOne(submissionId: number, workerId: string): Promise<
     } else {
       // 特殊评测器是题目配置的一部分，编译失败属于系统错误而不是选手的问题
       if (checkerCode) {
-        checker = await buildProgram({
+        checker = await exec.build({
           code: checkerCode,
           language: checkerLanguage,
           memoryLimitMb: 512,
@@ -127,7 +129,7 @@ export async function judgeOne(submissionId: number, workerId: string): Promise<
 
       for (let i = 0; i < cases.length && finalStatus !== 'SE'; i += 1) {
         const tc = cases[i];
-        const run = await runOnce(built.dir, sub.language, built.sourceFile, {
+        const run = await exec.run(built.dir, sub.language, built.sourceFile, {
           input: tc.input,
           timeLimitMs: problem.time_limit_ms,
           memoryLimitMb: problem.memory_limit_mb,
@@ -138,7 +140,7 @@ export async function judgeOne(submissionId: number, workerId: string): Promise<
         if (run.status !== 'OK') {
           status = run.status;
         } else if (checker) {
-          const verdict = await runChecker({
+          const verdict = await exec.runChecker({
             dir: checker.dir,
             language: checkerLanguage,
             sourceFile: checker.sourceFile,
@@ -207,8 +209,8 @@ export async function judgeOne(submissionId: number, workerId: string): Promise<
     finalStatus = 'SE';
     compileMsg = err instanceof Error ? err.message : String(err);
   } finally {
-    if (built) removeDir(built.dir);
-    if (checker) removeDir(checker.dir);
+    if (built) exec.cleanup(built.dir);
+    if (checker) exec.cleanup(checker.dir);
   }
 
   const passCount = results.filter((r) => r.status === 'AC').length;

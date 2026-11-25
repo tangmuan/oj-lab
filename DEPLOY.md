@@ -17,11 +17,62 @@
 - **方案 A（局域网/内网）**：可接受。使用者是你信任的同学/同事。
 - **方案 B/C（公网）**：**必须先做隔离**，否则等于把服务器交给任何会写 `os.system("rm -rf /")` 的人。最低要求：
   - 每次判题跑在独立容器里：`--network none --read-only --pids-limit 64 --memory 256m --cpus 1 --user 65534`
-  - 判题容器不挂载任何宿主目录，只挂一个空的可写 tmpfs
+  - 判题容器不挂载任何宿主数据目录，只挂一次性工作目录 + 一块小 tmpfs（`/tmp`）
   - 判题机与主服务分机部署（把 `judge/` 单独抽成服务）
   - 关闭/收紧注册（加邀请码），Nginx 层加 `limit_req` 限流
 
-当前代码把执行逻辑收敛在 `server/src/judge/exec.ts`（`buildProgram` / `runOnce`），要换成 Docker 只需改这两个函数，业务层不用动——需要我改成 Docker 执行器可以直接说。
+上面对容器的最低要求**已经内置在 Docker 执行器里**（`JUDGE_EXECUTOR=docker`），部署步骤见下文「Docker 判题执行器」一节；默认的 `local` 执行器没有隔离，仅限方案 A 的信任环境。
+
+---
+
+## Docker 判题执行器
+
+**前置条件**
+
+1. 宿主机已安装 Docker（Linux 原生，或 Windows/macOS 的 Docker Desktop）；
+2. 判题镜像内置 5 种语言的工具链，缺一不可：
+
+   | 语言 | 镜像内需要的命令 |
+   | --- | --- |
+   | C | `gcc`（-std=c17，链接 `-lm`） |
+   | C++ | `g++`（-std=c++17） |
+   | Python | `python`（3.11+，支持 `-X utf8` 与 `-m py_compile`） |
+   | Node.js | `node`（20+） |
+   | Java | `javac` / `java`（17+） |
+
+   参考镜像（基于 `ubuntu:24.04`，放 `server/docker/judge.Dockerfile`）：
+
+   ```dockerfile
+   FROM ubuntu:24.04
+   RUN apt-get update && apt-get install -y --no-install-recommends \
+       gcc g++ python3 nodejs npm openjdk-17-jdk-headless \
+    && ln -sf /usr/bin/python3 /usr/local/bin/python \
+    && rm -rf /var/lib/apt/lists/*
+   WORKDIR /box
+   ```
+
+   ```bash
+   docker build -t oj-judge:latest -f server/docker/judge.Dockerfile server/docker
+   ```
+
+**启用步骤**
+
+```bash
+# .env 或 systemd 环境里加两行
+JUDGE_EXECUTOR=docker
+JUDGE_DOCKER_IMAGE=oj-judge:latest   # 可选，默认就是 oj-judge:latest
+
+# 重启 API（内联模式）或 judge worker
+npm run start        # 或 npm run judge
+```
+
+**行为说明**
+
+- 编译、运行、checker **全部在容器里完成**（包括 gcc/g++/javac 本身），宿主机不需要装任何工具链；
+- 每条命令一个一次性容器：`docker run --rm --network none --read-only --pids-limit 64 --memory {limit}m --memory-swap {limit}m --cpus 1 --user 65534 --tmpfs /tmp:rw,size=64m -v {工作目录}:/box -w /box`；容器对宿主的可见面只有挂载的一次性工作目录（判完即删），读不到数据库、源码仓库等任何数据目录；
+- 超时/输出上限由外层统一施加（超时会杀 docker 客户端并用 `docker rm -f` 清理容器）；内存超限由 cgroup OOM 完成，退出码 137 判为 MLE——容器内进程的内存宿主采样不到，所以 docker 执行器下 MLE 判定是精确的；
+- docker 不存在、daemon 没起、镜像缺失时，提交判为 SE、自测运行返回 503，错误信息直接说明原因，不会冒充成编译错误；
+- 预热（Windows Defender 规避）对容器无意义但保留了行为一致性，编译型语言每次判题会多跑一次极短的容器空转，介意可在题目时限预算里留出容器启动开销（约 0.3~1s）。
 
 ---
 
@@ -195,6 +246,9 @@ docker compose exec oj node dist/seed/run.js
 | `JWT_SECRET` | dev 默认值 | **必须换随机 32 字节**，否则 token 可伪造 |
 | `DB_PATH` | `server/data/oj.db` | 放数据盘并纳入备份 |
 | `JUDGE_CONCURRENCY` | 2 | 按 CPU 核数，`核数/2` 左右 |
+| `JUDGE_WORKERS` | 2（兼容旧名 `JUDGE_CONCURRENCY`） | 判题 worker 并发数 |
+| `JUDGE_EXECUTOR` | `local` | 公网部署必须设 `docker`（见上文「Docker 判题执行器」） |
+| `JUDGE_DOCKER_IMAGE` | `oj-judge:latest` | Docker 执行器的判题镜像 |
 | `SUBMIT_COOLDOWN_SEC` | 5 | 人多了保持 5~10 |
 | `RUN_COOLDOWN_MS` | 2000 | 自测频率限制 |
 | `CORS_ORIGIN` | `http://localhost:5173` | 同源部署（单端口）可不改；前后端分开部署时改成前端域名 |

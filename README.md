@@ -112,6 +112,7 @@ npm run start         # 默认 0.0.0.0:3001，启动日志会打印局域网地�
 | 分离 | `JUDGE_INLINE=0 npm start` + `npm run judge` | API 只入队，判题由独立进程消费；`JUDGE_WORKERS` 控制 worker 并发（默认 2，兼容旧名 `JUDGE_CONCURRENCY`） |
 
 - **崩溃恢复**：worker 启动时自动作废全部残留认领、把中断的 `JUDGING` 提交打回 `PENDING` 并补进队列，不会出现永久 JUDGING；worker 收到 SIGINT/SIGTERM 会先等当前提交判完再退出（再按一次 Ctrl+C 强制退出，残留由下次启动恢复）。
+- **执行器可替换**：真正跑代码的部分抽象为 `JudgeExecutor` 接口（`judge/executor.ts`），`JUDGE_EXECUTOR=local`（默认，宿主子进程）与 `docker`（一次性容器，有隔离）切换行为，自测运行与提交判题走同一实现；详见 DEPLOY.md「Docker 判题执行器」。
 - **进度可见**：逐点结果写 `submission_cases`（含 `first_diff`），批量重判批次写 `rejudge_batches` 两表——API 的 SSE 改为轮询这两张表推增量，事件格式与旧的进程内事件完全一致，API 或 worker 任意一方重启都不丢进度。
 - 生产构建后 worker 入口是 `node dist/judge/worker-cli.js`（`npm run judge` 是开发快捷方式）。
 
@@ -229,13 +230,15 @@ GET  /api/streams/batch/:id?ticket=                # 批量重判进度 SSE（�
 | JUDGE_WORK_DIR | data/judge | 判题临时目录（跑完即删） |
 | JUDGE_INLINE | 1 | 1 = API 进程内联一个 worker（零配置）；0 = 分离模式，API 只入队，需另跑 `npm run judge` |
 | JUDGE_WORKERS | 2（兼容旧名 JUDGE_CONCURRENCY） | 判题 worker 并发数 |
+| JUDGE_EXECUTOR | local | 判题执行器：local = 宿主子进程（无隔离）；docker = 一次性容器（有隔离，见 DEPLOY.md） |
+| JUDGE_DOCKER_IMAGE | oj-judge:latest | docker 执行器的判题镜像，需内置 5 种语言工具链 |
 | SUBMIT_COOLDOWN_SEC | 5（本地 .env 设为 1） | 同一用户提交间隔 |
 | RUN_COOLDOWN_MS | 2000 | 同一用户自测运行间隔（毫秒） |
 | CORS_ORIGIN | http://localhost:5173 | 允许的前端来源 |
 
 ## 已知限制（重要）
 
-1. **沙箱不是安全隔离。** 子进程 + 资源限制只能防「跑太久/吃太多内存」，挡不住恶意代码读文件、联网、fork 炸弹。仅适合本地教学/内部使用；用于公网必须换 Docker/gVisor/nsjail 等隔离方案（`judge/languages.ts` 与 `judge/runner.ts` 已抽象，替换成本可控）。
+1. **local 执行器没有安全隔离，docker 执行器才有。** `JUDGE_EXECUTOR=local`（默认）用宿主子进程 + 资源限制，只能防「跑太久/吃太多内存」，挡不住恶意代码读文件、联网、fork 炸弹，仅适合本地教学/内部信任环境；`JUDGE_EXECUTOR=docker` 时编译、运行、checker 全部在一次性容器里完成（`--network none --read-only --pids-limit 64 --memory --cpus 1 --user 65534`，启用步骤见 DEPLOY.md「Docker 判题执行器」），但镜像需自备 5 种语言工具链，且容器启动有约 0.3~1s 的额外开销。
 2. **内存是采样值，不是 cgroup 精确值。** Windows 无 cgroup，靠每 120ms 轮询 `tasklist` 的工作集，几十毫秒就跑完的 C/C++ 程序可能采不到，界面显示 `—`（鼠标悬停有说明）；MLE 判定对长时间运行的程序才准确。
 3. **C++ 万能头 shim。** 本机 MinGW 8.1 的 `<bits/stdc++.h>` 会引入残缺的 `<filesystem>`，C++17 下必然编译失败；`judge-include/bits/stdc++.h` 提供了跳过 `<filesystem>` 的等价头，判题时用 `-I` 优先命中。换用 GCC 9+ 后可直接删掉该目录。
 4. **题面 HTML 未做 sanitize。** 题面仅管理员可写，若开放给普通用户出题，需要接入 DOMPurify。
@@ -243,7 +246,7 @@ GET  /api/streams/batch/:id?ticket=                # 批量重判进度 SSE（�
 6. **SSE ticket 存在进程内存。** 单实例部署没问题；若将来多副本负载均衡，票据需要放到 Redis 等共享存储，否则换票与建连可能落到不同进程。
 7. **热力图按 UTC 日期聚合。** 与 `created_at` 的存储口径一致；北京时间凌晨 0–8 点的提交会算到前一天。
 8. **代码 diff 有规模上限。** 单侧超过 1500 行时降级成「整段删除 + 整段新增」，不再做 LCS（DP 表太占内存），行号仍然正确。
-9. **checker 与选手代码共用一个沙箱。** checker 同样没有真正的隔离，只适合本地教学环境。
+9. **（local 执行器）checker 与选手代码共用一个沙箱。** local 下 checker 同样没有真正的隔离，只适合本地教学环境；docker 执行器下 checker 与选手代码跑在各自的独立容器里（只共享隔离配置），不存在共享面。
 10. **判题队列按单 worker 进程设计。** 队列与批次都已持久化到 SQLite，跨进程安全；但 worker 的崩溃恢复按「全库残留认领作废」处理，如果同时跑多个 worker 进程，一个崩溃启动会把另一个正在判的提交打回 PENDING 重判。多实例负载均衡需要引入认领超时或改用 Redis 队列。
 11. **SQLite 写锁会阻塞事件循环。** better-sqlite3 是同步驱动，API 与 worker 并发写同一个库时靠 busy_timeout（5s）排队等待，极端情况下 API 请求会被写锁拖住；写入量再大就该考虑把 DB 拆开或换异步驱动。
 12. **封榜只打码逐条结果，聚合计数仍然可见。** 题目列表的通过率/AC 数、题目与个人统计的 distribution、总榜的 solved 数都把封榜期提交计入，有心人可以结合「封榜中」标记间接推断结果；完整隐藏需要把这些聚合也按封榜窗口过滤。

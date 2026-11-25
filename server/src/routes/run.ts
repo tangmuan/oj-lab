@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { config } from '../config';
 import { db } from '../db';
 import { truncate } from '../judge/comparator';
-import { buildProgram, removeDir, runOnce } from '../judge/exec';
+import { getExecutor } from '../judge/executor-factory';
 import { isLanguageId } from '../judge/languages';
 import { requireAuth } from '../middleware/auth';
 import { ProblemRow } from '../types';
@@ -51,7 +51,9 @@ runRouter.post(
     }
     lastRunAt.set(user.id, now);
 
-    const built = await buildProgram({
+    // 自测运行与提交判题走同一个执行器，保证「自测通过、提交也通过」的行为一致
+    const exec = getExecutor();
+    const built = await exec.build({
       code,
       language,
       memoryLimitMb: limits.memoryLimitMb,
@@ -74,7 +76,7 @@ runRouter.post(
         return;
       }
 
-      const result = await runOnce(built.dir, language, built.sourceFile, {
+      const result = await exec.run(built.dir, language, built.sourceFile, {
         input,
         timeLimitMs: limits.timeLimitMs,
         memoryLimitMb: limits.memoryLimitMb,
@@ -97,7 +99,7 @@ runRouter.post(
         truncated,
       });
     } finally {
-      removeDir(built.dir);
+      exec.cleanup(built.dir);
     }
   })
 );
