@@ -4,6 +4,29 @@ import { db } from '../db';
 import { optionalAuth, requireAuth } from '../middleware/auth';
 import { ProblemRow, TestcaseRow } from '../types';
 import { ah, notFound, unauthorized } from '../utils/errors';
+import { nowSqlUtc } from '../utils/contest';
+
+/**
+ * 题目可见性规则（比赛窗口）：
+ *   可见 = is_public = 1，且【不是「挂了比赛但所有关联比赛都未开始」】。
+ *   - 管理员永远可见；
+ *   - 挂了 ≥1 场比赛、且没有任何一场关联比赛已开赛（start_at <= now 的比赛，
+ *     即 running / ended）→ 对普通用户不可见（列表过滤 + 详情 404，不泄露存在性）；
+ *   - 只要有任意一场关联比赛已开赛，题目立即恢复可见；
+ *   - 不涉及任何比赛的题与旧行为完全一致。
+ * 由于 running/ended 都满足 start_at <= now，「全部未开始」等价于 MIN(start_at) > now；
+ * 无关联比赛时 MIN 为 NULL，天然不命中隐藏条件。
+ */
+function hiddenByUpcomingContest(problemId: number, now: string): boolean {
+  const row = db
+    .prepare(
+      `SELECT MIN(c.start_at) AS earliest
+       FROM contest_problems cp JOIN contests c ON c.id = cp.contest_id
+       WHERE cp.problem_id = ?`
+    )
+    .get(problemId) as { earliest: string | null };
+  return row.earliest !== null && row.earliest > now;
+}
 
 export const problemsRouter = Router();
 
@@ -59,6 +82,19 @@ const LIST_FROM = `
   LEFT JOIN favorites fav ON fav.problem_id = p.id AND fav.user_id = ?
 `;
 
+/**
+ * 比赛窗口聚合：每个 problem_id 一行，earliest_start = 最早开赛的关联比赛时间（无关联比赛为 NULL）。
+ * 与 hiddenByUpcomingContest 是同一条规则：earliest_start > 当前时间 ⟺ 所有关联比赛都未开赛 → 隐藏。
+ * 计数查询与列表查询共用，保证分页 total 与过滤结果一致。
+ */
+const CONTEST_AGG = `
+  LEFT JOIN (
+    SELECT cp.problem_id, MIN(c.start_at) AS earliest_start
+    FROM contest_problems cp JOIN contests c ON c.id = cp.contest_id
+    GROUP BY cp.problem_id
+  ) cst ON cst.problem_id = p.id
+`;
+
 problemsRouter.get(
   '/',
   optionalAuth,
@@ -72,7 +108,14 @@ problemsRouter.get(
 
     const where: string[] = [];
     const params: unknown[] = [];
-    if (!isAdmin) where.push('p.is_public = 1');
+    const now = nowSqlUtc();
+    if (!isAdmin) {
+      where.push('p.is_public = 1');
+      // 挂了比赛但全部未开赛的题：列表里直接过滤，不泄露标题与存在性。
+      // 这是「保留」条件：无关联比赛（earliest_start 为 NULL）或已有比赛开赛 → 保留
+      where.push('(cst.earliest_start IS NULL OR cst.earliest_start <= ?)');
+      params.push(now);
+    }
     if (keyword) {
       where.push('(p.title LIKE ? OR p.description LIKE ?)');
       params.push(`%${keyword}%`, `%${keyword}%`);
@@ -94,7 +137,11 @@ problemsRouter.get(
     const total = (
       db
         .prepare(
-          `SELECT COUNT(*) AS c FROM problems p LEFT JOIN favorites fav ON fav.problem_id = p.id AND fav.user_id = ? ${whereSql}`
+          `SELECT COUNT(*) AS c
+           FROM problems p
+           ${CONTEST_AGG}
+           LEFT JOIN favorites fav ON fav.problem_id = p.id AND fav.user_id = ?
+           ${whereSql}`
         )
         .get(viewerId, ...(params as never[])) as { c: number }
     ).c;
@@ -108,6 +155,7 @@ problemsRouter.get(
                 COALESCE(tagagg.tag_names, '[]') AS tag_names,
                 CASE WHEN fav.user_id IS NULL THEN 0 ELSE 1 END AS favorited
          ${LIST_FROM}
+         ${CONTEST_AGG}
          ${whereSql}
          ORDER BY p.id ASC
          LIMIT ? OFFSET ?`
@@ -172,6 +220,8 @@ problemsRouter.get(
     const problem = db.prepare('SELECT * FROM problems WHERE id = ?').get(id) as ProblemRow | undefined;
     if (!problem) throw notFound('题目不存在');
     if (problem.is_public !== 1 && req.user?.role !== 'admin') throw notFound('题目不存在');
+    // 挂了比赛且全部未开赛 → 与私有题同等对待，404 且文案一致，不泄露存在性
+    if (req.user?.role !== 'admin' && hiddenByUpcomingContest(id, nowSqlUtc())) throw notFound('题目不存在');
 
     const samples = db
       .prepare('SELECT id, input, expected_output, ord FROM testcases WHERE problem_id = ? AND is_sample = 1 ORDER BY ord ASC, id ASC')

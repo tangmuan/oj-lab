@@ -82,7 +82,8 @@ contestsRouter.get(
     if (contest.is_public !== 1 && !isAdmin) throw notFound('比赛不存在');
 
     const phase = phaseOf(contest);
-    // 未开始前不给题目，否则提前看题等于泄题；管理员例外
+    // 未开始前不给题目，否则提前看题等于泄题；管理员例外。
+    // 题目本身的可见性（列表/详情）由 routes/problems.ts 的比赛窗口规则兜底，两层语义一致
     const problems = phase === 'upcoming' && !isAdmin ? [] : loadContestProblems(id, isAdmin);
 
     const mine = req.user
