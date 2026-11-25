@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential \
       python3 \
       openjdk-17-jdk-headless \
+      docker.io \
       ca-certificates \
       tini \
  && rm -rf /var/lib/apt/lists/*

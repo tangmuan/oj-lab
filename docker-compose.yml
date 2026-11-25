@@ -1,20 +1,53 @@
 services:
-  oj:
+  api:
     build: .
-    container_name: oj-lab
     ports:
-      - "3001:3001"
+      - "127.0.0.1:3001:3001"
     volumes:
-      # SQLite 数据库与判题临时目录都在这，务必挂出来，否则重建容器数据全丢
-      - ./server/data:/app/server/data
+      # Docker's daemon must see the judge work directory at this exact host path.
+      - ${OJ_DATA_DIR:?Set OJ_DATA_DIR to an absolute host path}:${OJ_DATA_DIR:?Set OJ_DATA_DIR to an absolute host path}
+      # Required by isolated self-test execution; keep this API private behind a reverse proxy.
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       NODE_ENV: production
-      # 生产必须改成随机长字符串，可用 `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` 生成
-      JWT_SECRET: "change-me-to-a-long-random-string"
-      JUDGE_CONCURRENCY: "2"
+      OJ_DEPLOYMENT_MODE: public
+      JWT_SECRET: ${JWT_SECRET:?Set a random JWT_SECRET before starting Compose}
+      PORT: "3001"
+      HOST: 0.0.0.0
+      DB_PATH: ${OJ_DATA_DIR:?Set OJ_DATA_DIR to an absolute host path}/oj.db
+      JUDGE_WORK_DIR: ${OJ_DATA_DIR:?Set OJ_DATA_DIR to an absolute host path}/judge
+      JUDGE_INLINE: "0"
+      JUDGE_EXECUTOR: docker
+      JUDGE_DOCKER_IMAGE: oj-judge:latest
+      JUDGE_WORKERS: "2"
+      JUDGE_QUEUE_LIMIT: "2000"
       SUBMIT_COOLDOWN_SEC: "5"
+      TRUST_PROXY: "1"
     restart: unless-stopped
-    # 判题是 CPU/内存密集型，按机器规格给个上限，避免一个死循环拖垮整机
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1g
+
+  judge:
+    build: .
+    command: ["node", "dist/judge/worker-cli.js"]
+    volumes:
+      - ${OJ_DATA_DIR:?Set OJ_DATA_DIR to an absolute host path}:${OJ_DATA_DIR:?Set OJ_DATA_DIR to an absolute host path}
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      NODE_ENV: production
+      OJ_DEPLOYMENT_MODE: public
+      JWT_SECRET: ${JWT_SECRET:?Set a random JWT_SECRET before starting Compose}
+      DB_PATH: ${OJ_DATA_DIR:?Set OJ_DATA_DIR to an absolute host path}/oj.db
+      JUDGE_WORK_DIR: ${OJ_DATA_DIR:?Set OJ_DATA_DIR to an absolute host path}/judge
+      JUDGE_INLINE: "0"
+      JUDGE_EXECUTOR: docker
+      JUDGE_DOCKER_IMAGE: oj-judge:latest
+      JUDGE_WORKERS: "2"
+      JUDGE_QUEUE_LIMIT: "2000"
+    restart: unless-stopped
     deploy:
       resources:
         limits:

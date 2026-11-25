@@ -48,6 +48,14 @@
   .table-base {
     @apply w-full border-collapse text-sm;
   }
+@media (max-width: 639px) {
+  .table-base {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
   .table-base th {
     @apply border-b border-slate-200 bg-slate-50/80 px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500
       dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400;

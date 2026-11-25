@@ -32,18 +32,19 @@ npm run dev
 | admin | admin123 | 管理员 |
 | demo | demo123 | 普通用户 |
 
-> `npm run seed` 会以「不存在才插入」的方式补齐 `admin`（角色 admin），因此先 seed 再注册也不会出现「没有管理员」的死局；已有库缺管理员时重跑 seed 即可补上，日志会打印每个账号是新建还是已存在。
+> `admin/demo` 只由开发用 `npm run seed` 创建。生产环境拒绝运行 demo seed，也不会把首个公开注册账号提权；生产管理员必须显式初始化。
 >
-> 空库时首个注册的账号仍会自动成为管理员；登录 admin 后也可以在管理端改任意用户角色。
+> 开发模式下空库的首个注册账号仍会成为管理员。生产首次初始化示例：`OJ_ADMIN_USERNAME=... OJ_ADMIN_PASSWORD=... npm run admin:create`（密码至少 12 位）。
 
 ## 生产部署（单端口）
 
 ```bash
 npm run install:all   # 装两端依赖
 npm run build         # web 构建 + server 编译（前端产物由后端托管）
-npm run seed          # 初始化题库（幂等）
 npm run start         # 默认 0.0.0.0:3001，启动日志会打印局域网地址
 ```
+
+该快捷部署适用于开发或可信的内部教学环境。生产必须设置 `NODE_ENV=production`、`OJ_DEPLOYMENT_MODE=internal|public` 和非默认 `JWT_SECRET`；公网模式还强制 `JUDGE_EXECUTOR=docker`。公网推荐使用 Docker Compose 部署。
 
 访问 `http://<本机IP>:3001` 即可，前端路由（如 `/problems/5` 刷新）由后端回退到 `index.html`。
 详细步骤、Nginx 配置（含 SSE 必须关 `proxy_buffering`）、systemd、Docker、备份升级、常见问题都在 **[DEPLOY.md](./DEPLOY.md)**。
@@ -108,10 +109,10 @@ npm run start         # 默认 0.0.0.0:3001，启动日志会打印局域网地�
 
 | 模式 | 启动方式 | 说明 |
 | --- | --- | --- |
-| 内联（默认） | `npm start` / `npm run dev` | 不设任何环境变量时 API 进程内自带一个 worker，零配置可用；启动日志会标明「内联 worker」 |
-| 分离 | `JUDGE_INLINE=0 npm start` + `npm run judge` | API 只入队，判题由独立进程消费；`JUDGE_WORKERS` 控制 worker 并发（默认 2，兼容旧名 `JUDGE_CONCURRENCY`） |
+| 内联（开发默认） | `npm start` / `npm run dev` | API 进程内自带 worker，适合开发与可信的内部教学环境 |
+| 分离 | `JUDGE_INLINE=0 npm start` + `npm run judge` | API 只入队，独立 worker 消费；公网模式要求 `JUDGE_EXECUTOR=docker` |
 
-- **崩溃恢复**：worker 启动时自动作废全部残留认领、把中断的 `JUDGING` 提交打回 `PENDING` 并补进队列，不会出现永久 JUDGING；worker 收到 SIGINT/SIGTERM 会先等当前提交判完再退出（再按一次 Ctrl+C 强制退出，残留由下次启动恢复）。
+- **崩溃恢复**：每个认领有独立 token，worker 每 10 秒续租，45 秒过期后才可恢复；恢复和退出仅影响自己的过期/持有任务。新一轮开始会事务清空旧测试点，过期 worker 不能写回旧轮结果。
 - **执行器可替换**：真正跑代码的部分抽象为 `JudgeExecutor` 接口（`judge/executor.ts`），`JUDGE_EXECUTOR=local`（默认，宿主子进程）与 `docker`（一次性容器，有隔离）切换行为，自测运行与提交判题走同一实现；详见 DEPLOY.md「Docker 判题执行器」。
 - **进度可见**：逐点结果写 `submission_cases`（含 `first_diff`），批量重判批次写 `rejudge_batches` 两表——API 的 SSE 改为轮询这两张表推增量，事件格式与旧的进程内事件完全一致，API 或 worker 任意一方重启都不丢进度。
 - 生产构建后 worker 入口是 `node dist/judge/worker-cli.js`（`npm run judge` 是开发快捷方式）。
@@ -129,7 +130,9 @@ npm run start         # 默认 0.0.0.0:3001，启动日志会打印局域网地�
 - **自测运行**：自定义标准输入 → 运行 → 右侧看程序输出（含 stderr、退出码、耗时、内存），不入提交记录、不影响通过率；`Ctrl+Enter` 运行、`Ctrl+Shift+Enter` 提交；可一键填充题面样例
 - **草稿箱**：自建任意语言的代码文件，输入即自动保存（700ms 防抖）、关页面/换浏览器再打开仍是原样；支持新建/重命名/切换语言/删除/搜索，可直接运行调试；题目页可一键「存草稿」把当前代码带进草稿箱
 - **自定义语言模板**：每种语言可保存一份自己的初始模板，之后新建该语言文件自动套用；支持「填入当前文件」快速把已写好的代码结构存为模板、一键恢复系统默认
-- **特殊评测（SPJ）**：题目的 checker 与题目一起存（`checker_language` + `checker_code`），从 argv 拿 `input.txt / output.txt / answer.txt`，stdout 首行 `AC` 或退出码 0 视为通过；WA 时**样例测试点**展示 checker 的 stderr（截断 400 字）作为错因，**隐藏测试点一律只显示「评测器判为错误」**——checker 的 stderr / stdout / 退出码不外泄，防止 checker 打印期望值泄露答案；checker 为空时完全走原来的行比对
+- **特殊评测（SPJ）**：checker 的正常 `WA` 协议保持不变；checker 的超时、超内存、超输出和执行环境错误判为 `SE`，即使 stdout 已输出 `AC` 也不能通过。隐藏测试点不展示 checker 的诊断文本。
+- **题面格式**：题面、输入/输出说明和提示共用 DOMPurify 净化；支持 KaTeX 行内 `$...$` 与块级 `$$...$$` 公式。
+- **做题布局**：桌面端题面与编辑器可拖动分栏，编辑器可全屏；窄屏导航和表格可横向滚动。
 - 判题结果：SSE 实时逐点结果（前端断线自动降级轮询），编译错误输出、样例差异提示；推送完成后服务端主动断流，并用 60 秒一次性 ticket 代替 URL 上的长期 token
 - 历史：我的提交列表（按状态筛选）、提交详情（代码只对本人/管理员可见）
 - 排名：通过题数榜（同分看提交次数）、通过率、最近提交时间
@@ -169,8 +172,8 @@ web/
 
 ```bash
 npm run check                            # 两端 tsc --noEmit（CI 必跑）
-npm run test:unit                        # 纯函数单测：输出比对 / Java 类名 / 前端格式化
-cd server && node scripts/smoke.mjs      # 9 项断言：5 语言 AC + WA + TLE + CE + RE
+npm run test:unit                        # 单测 + 临时 SQLite 集成回归：五语言、SPJ、队列、权限和封榜
+npm run test:judge                       # 对当前已启动服务运行 API 冒烟脚本
 cd server && node scripts/contest-freeze.mjs  # 封榜语义回归：三个读接口的打码 / 本人可见 / 管理员全量 / 赛后恢复（需先启动后端）
 cd server && node scripts/contest-visibility.mjs  # 比赛窗口可见性：未开赛隐藏 / 开赛恢复 / 已结束+未开始并存仍可见（需先启动后端）
 cd server && node scripts/spj-stderr.mjs  # SPJ 错因收紧：隐藏点不外泄 checker stderr / 样例正常展示 / SSE 同规则（需先启动后端）
@@ -181,7 +184,7 @@ cd web && node scripts/ui-problem-template.mjs  # 题目页套用自定义模板
 cd web && node scripts/ui-dark.mjs       # 逐页浅色/深色截图，校验深色生效且无控制台/HTTP 错误
 ```
 
-单元测试用 `node:test`，不引入测试框架；`ui-*.mjs` 依赖的 `playwright-core` 已在 `web/devDependencies` 中锁定版本，`npm ci` 后可直接运行。CI（`.github/workflows/ci.yml`）依次执行两端 `npm ci` → `tsc --noEmit` → 单测。
+测试使用 `node:test` 与临时数据库/工作目录；需要本地 gcc、g++、Python、Node 和 JDK 来跑真实多语言集成。Docker 可用且 `oj-judge:latest` 镜像存在时会额外跑容器限制回归；CI 会构建该镜像。`ui-*.mjs` 依赖的 `playwright-core` 已锁版本。
 
 ## API 速览
 
@@ -226,35 +229,34 @@ GET  /api/streams/batch/:id?ticket=                # 批量重判进度 SSE（�
 | --- | --- | --- |
 | PORT | 3001 | 服务端口 |
 | JWT_SECRET | dev-only-secret-change-me | 生产必须替换 |
+| OJ_DEPLOYMENT_MODE | development（非生产） | 生产必填：`internal` 或 `public`；公网强制 Docker 执行器 |
 | DB_PATH | data/oj.db | SQLite 文件路径 |
 | JUDGE_WORK_DIR | data/judge | 判题临时目录（跑完即删） |
 | JUDGE_INLINE | 1 | 1 = API 进程内联一个 worker（零配置）；0 = 分离模式，API 只入队，需另跑 `npm run judge` |
 | JUDGE_WORKERS | 2（兼容旧名 JUDGE_CONCURRENCY） | 判题 worker 并发数 |
 | JUDGE_EXECUTOR | local | 判题执行器：local = 宿主子进程（无隔离）；docker = 一次性容器（有隔离，见 DEPLOY.md） |
 | JUDGE_DOCKER_IMAGE | oj-judge:latest | docker 执行器的判题镜像，需内置 5 种语言工具链 |
+| JUDGE_QUEUE_LIMIT | 2000 | 判题队列最大任务数 |
 | SUBMIT_COOLDOWN_SEC | 5（本地 .env 设为 1） | 同一用户提交间隔 |
 | RUN_COOLDOWN_MS | 2000 | 同一用户自测运行间隔（毫秒） |
+| TRUST_PROXY | 0 | 单层可信反向代理后设为 1，启用客户端 IP 限流 |
 | CORS_ORIGIN | http://localhost:5173 | 允许的前端来源 |
 
 ## 已知限制（重要）
 
-1. **local 执行器没有安全隔离，docker 执行器才有。** `JUDGE_EXECUTOR=local`（默认）用宿主子进程 + 资源限制，只能防「跑太久/吃太多内存」，挡不住恶意代码读文件、联网、fork 炸弹，仅适合本地教学/内部信任环境；`JUDGE_EXECUTOR=docker` 时编译、运行、checker 全部在一次性容器里完成（`--network none --read-only --pids-limit 64 --memory --cpus 1 --user 65534`，启用步骤见 DEPLOY.md「Docker 判题执行器」），但镜像需自备 5 种语言工具链，且容器启动有约 0.3~1s 的额外开销。
-2. **内存是采样值，不是 cgroup 精确值。** Windows 无 cgroup，靠每 120ms 轮询 `tasklist` 的工作集，几十毫秒就跑完的 C/C++ 程序可能采不到，界面显示 `—`（鼠标悬停有说明）；MLE 判定对长时间运行的程序才准确。
-3. **C++ 万能头 shim。** 本机 MinGW 8.1 的 `<bits/stdc++.h>` 会引入残缺的 `<filesystem>`，C++17 下必然编译失败；`judge-include/bits/stdc++.h` 提供了跳过 `<filesystem>` 的等价头，判题时用 `-I` 优先命中。换用 GCC 9+ 后可直接删掉该目录。
-4. **题面 HTML 未做 sanitize。** 题面仅管理员可写，若开放给普通用户出题，需要接入 DOMPurify。
-5. **JWT 存 localStorage。** 简单直接，但存在 XSS 窃取风险；更高安全要求应改用 httpOnly Cookie + CSRF token。SSE 已经不再把 JWT 放 URL，改用 60 秒一次性 ticket。
-6. **SSE ticket 存在进程内存。** 单实例部署没问题；若将来多副本负载均衡，票据需要放到 Redis 等共享存储，否则换票与建连可能落到不同进程。
-7. **热力图按 UTC 日期聚合。** 与 `created_at` 的存储口径一致；北京时间凌晨 0–8 点的提交会算到前一天。
-8. **代码 diff 有规模上限。** 单侧超过 1500 行时降级成「整段删除 + 整段新增」，不再做 LCS（DP 表太占内存），行号仍然正确。
-9. **（local 执行器）checker 与选手代码共用一个沙箱。** local 下 checker 同样没有真正的隔离，只适合本地教学环境；docker 执行器下 checker 与选手代码跑在各自的独立容器里（只共享隔离配置），不存在共享面。
-10. **判题队列按单 worker 进程设计。** 队列与批次都已持久化到 SQLite，跨进程安全；但 worker 的崩溃恢复按「全库残留认领作废」处理，如果同时跑多个 worker 进程，一个崩溃启动会把另一个正在判的提交打回 PENDING 重判。多实例负载均衡需要引入认领超时或改用 Redis 队列。
-11. **SQLite 写锁会阻塞事件循环。** better-sqlite3 是同步驱动，API 与 worker 并发写同一个库时靠 busy_timeout（5s）排队等待，极端情况下 API 请求会被写锁拖住；写入量再大就该考虑把 DB 拆开或换异步驱动。
-12. **封榜只打码逐条结果，聚合计数仍然可见。** 题目列表的通过率/AC 数、题目与个人统计的 distribution、总榜的 solved 数都把封榜期提交计入，有心人可以结合「封榜中」标记间接推断结果；完整隐藏需要把这些聚合也按封榜窗口过滤。
-13. **比赛窗口可见性只管「读题」，聚合与提交入口仍有残留。** 规则：题目可见 = is_public 且不是「挂了比赛但所有关联比赛都未开赛」（管理员例外，任意关联比赛开赛后恢复；无比赛的题不受影响）。该规则已覆盖题目列表与详情（404），但仍有间接泄露面：标签云计数、题目统计接口的 distribution、以及 `/api/run` 与 `POST /api/submissions` 对未开赛题目的提交未被拦（知道 id 的用户可盲提交试错，但读不到题面与样例）；此外题目列表的通过率/提交数统计也不区分比赛窗口。
+1. `local` 执行器没有文件系统或网络隔离，只适用于可信的本地/内部环境。生产 `public` 模式拒绝非 Docker 执行器。
+2. Docker 容器内通过 cgroup 限制内存，但 Docker 执行器不报告容器峰值内存，因此界面显示 `—`；超限仍按 MLE 判定。宿主 local 模式的 Windows 内存值是采样值。
+3. Docker 执行器依赖 Docker daemon。公网 Compose 将 API 和 worker 分开，但两者都需要 Docker socket（API 自测也会运行容器）；挂载 Docker socket 的服务账号拥有高权限，需限制主机访问并保持系统更新。判题工作目录必须在宿主机与服务容器使用相同绝对路径。
+4. JWT 仍存于 `localStorage`，XSS 可窃取当前用户 token；SSE 长期 JWT 不放 URL，使用 60 秒一次性 ticket。
+5. SSE ticket 当前存在 API 进程内存；多 API 副本需要共享票据存储或粘性路由。
+6. 热力图按 UTC 日期聚合；北京时间凌晨 0–8 点的提交会计入前一天。
+7. 代码 diff 单侧超过 1500 行时降级为整段删除/新增。
+8. 本机 MinGW 8.1 使用仓库内的 `<bits/stdc++.h>` shim；Linux Docker 镜像使用系统 GCC 头文件。
+9. better-sqlite3 是同步驱动，SQLite 写锁竞争会短暂阻塞 API 事件循环；当前通过 WAL、busy timeout 和有限队列控制单机负载。
 
 ## 后续可做
 
 - 交互题、多文件提交
 - 题单（把标签组合成学习路径）
-- Docker 沙箱（进程已分离，下一步是隔离）、判题机水平扩容（多 worker 实例需要认领超时或换 Redis 队列，见已知限制 10）
-- 单元测试扩展到判题流程与路由层（当前覆盖纯函数 + 端到端冒烟）
+- 交互题、多文件提交
+- 多 API 副本时共享 SSE ticket 存储与更高负载下 SQLite 写入优化

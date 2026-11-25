@@ -12,16 +12,9 @@
 
 ## 0. ⚠️ 安全红线（务必先读）
 
-判题器是**在本机用子进程执行用户提交的任意代码**，只做了时间/内存/输出限制，**没有文件系统与网络隔离**。
+部署分为三种明确模式：开发模式使用 `local` 执行器；可信的内部教学环境可以在 `OJ_DEPLOYMENT_MODE=internal` 下使用 `local`；公网环境必须设置 `OJ_DEPLOYMENT_MODE=public` 和 `JUDGE_EXECUTOR=docker`，否则生产服务拒绝启动。生产还必须配置非默认 `JWT_SECRET`，且不能使用 demo seed。
 
-- **方案 A（局域网/内网）**：可接受。使用者是你信任的同学/同事。
-- **方案 B/C（公网）**：**必须先做隔离**，否则等于把服务器交给任何会写 `os.system("rm -rf /")` 的人。最低要求：
-  - 每次判题跑在独立容器里：`--network none --read-only --pids-limit 64 --memory 256m --cpus 1 --user 65534`
-  - 判题容器不挂载任何宿主数据目录，只挂一次性工作目录 + 一块小 tmpfs（`/tmp`）
-  - 判题机与主服务分机部署（把 `judge/` 单独抽成服务）
-  - 关闭/收紧注册（加邀请码），Nginx 层加 `limit_req` 限流
-
-上面对容器的最低要求**已经内置在 Docker 执行器里**（`JUDGE_EXECUTOR=docker`），部署步骤见下文「Docker 判题执行器」一节；默认的 `local` 执行器没有隔离，仅限方案 A 的信任环境。
+`local` 执行器只限制时间、内存和输出，不隔离文件系统或网络。Docker 执行器将编译、选手程序和 checker 放进一次性容器，关闭网络、设只读根文件系统、限制 PID/CPU/内存，并只挂载本次临时工作目录。Docker socket 本身具有高权限，Compose 将 API 与 worker 拆开，但 API 仍需 socket 来运行自测代码；请仅在专用可信主机运行并限制主机访问。
 
 ---
 
@@ -40,39 +33,29 @@
    | Node.js | `node`（20+） |
    | Java | `javac` / `java`（17+） |
 
-   参考镜像（基于 `ubuntu:24.04`，放 `server/docker/judge.Dockerfile`）：
-
-   ```dockerfile
-   FROM ubuntu:24.04
-   RUN apt-get update && apt-get install -y --no-install-recommends \
-       gcc g++ python3 nodejs npm openjdk-17-jdk-headless \
-    && ln -sf /usr/bin/python3 /usr/local/bin/python \
-    && rm -rf /var/lib/apt/lists/*
-   WORKDIR /box
-   ```
-
-   ```bash
-   docker build -t oj-judge:latest -f server/docker/judge.Dockerfile server/docker
-   ```
+   仓库已提供镜像定义，使用 `docker build -t oj-judge:latest -f server/docker/judge.Dockerfile server/docker` 构建。
 
 **启用步骤**
 
 ```bash
-# .env 或 systemd 环境里加两行
+# .env 或 systemd 环境中设置
+OJ_DEPLOYMENT_MODE=public
 JUDGE_EXECUTOR=docker
 JUDGE_DOCKER_IMAGE=oj-judge:latest   # 可选，默认就是 oj-judge:latest
+JWT_SECRET=<随机 32 字节以上的密钥>
 
-# 重启 API（内联模式）或 judge worker
-npm run start        # 或 npm run judge
+# API 使用 docker 执行器做自测；正式提交由独立 worker 消费
+JUDGE_INLINE=0 npm run start
+npm run judge
 ```
 
 **行为说明**
 
 - 编译、运行、checker **全部在容器里完成**（包括 gcc/g++/javac 本身），宿主机不需要装任何工具链；
 - 每条命令一个一次性容器：`docker run --rm --network none --read-only --pids-limit 64 --memory {limit}m --memory-swap {limit}m --cpus 1 --user 65534 --tmpfs /tmp:rw,size=64m -v {工作目录}:/box -w /box`；容器对宿主的可见面只有挂载的一次性工作目录（判完即删），读不到数据库、源码仓库等任何数据目录；
-- 超时/输出上限由外层统一施加（超时会杀 docker 客户端并用 `docker rm -f` 清理容器）；内存超限由 cgroup OOM 完成，退出码 137 判为 MLE——容器内进程的内存宿主采样不到，所以 docker 执行器下 MLE 判定是精确的；
+- 选手程序时限在容器内开始计时，不计 Docker daemon/容器启动；外层另留启动宽限并在异常退出时删除容器。超时、输出上限和 cgroup OOM 分别映射 TLE、OLE、MLE。Docker 执行器暂不报告容器峰值内存，界面显示 `—`；
 - docker 不存在、daemon 没起、镜像缺失时，提交判为 SE、自测运行返回 503，错误信息直接说明原因，不会冒充成编译错误；
-- 预热（Windows Defender 规避）对容器无意义但保留了行为一致性，编译型语言每次判题会多跑一次极短的容器空转，介意可在题目时限预算里留出容器启动开销（约 0.3~1s）。
+- 每条命令使用一次性容器，编译型程序每个测试点都会启动容器，因此总提交响应时间会包含多次容器启动；单个测试点的程序时限不包含该启动时间。
 
 ---
 
@@ -122,7 +105,9 @@ pm2 save
 
 ---
 
-## B. 云服务器部署（公网 + 域名 + HTTPS）
+## B. 云服务器内部教学部署（systemd）
+
+此方案使用 `local` 执行器，只适用于可信用户的内部教学环境。公网部署请使用下方 Docker Compose 方案。
 
 以 Ubuntu 22.04 为例，项目放 `/opt/oj`。
 
@@ -146,8 +131,9 @@ cd /opt/oj
 # 上传代码：git clone <你的仓库> .  或  rsync -av ./ user@server:/opt/oj/
 npm run install:all
 npm run build
-npm run seed
 ```
+
+首次管理员请用 `OJ_ADMIN_USERNAME` / `OJ_ADMIN_PASSWORD` 执行 `node server/dist/seed/create-admin.js`。生产环境不要运行开发用 `npm run seed`。
 
 ### 3) systemd 托管（只监听本机，公网入口交给 Nginx）
 
@@ -165,6 +151,8 @@ Restart=always
 RestartSec=3
 User=www-data
 Environment=NODE_ENV=production
+Environment=OJ_DEPLOYMENT_MODE=internal
+Environment=JUDGE_EXECUTOR=local
 Environment=HOST=127.0.0.1
 Environment=PORT=3001
 Environment=JWT_SECRET=换成随机长字符串
@@ -217,23 +205,38 @@ sudo certbot --nginx -d oj.example.com   # 自动配 HTTPS 并续期
 
 ---
 
-## C. Docker 部署
+## C. 公网 Docker Compose 部署
 
 ```bash
-# JWT_SECRET 换成随机值
-export JWT=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
-sed -i "s/change-me-to-a-long-random-string/$JWT/" docker-compose.yml
+# Linux 宿主机上的绝对路径；该路径会以相同绝对路径挂入 API、worker 和判题容器
+export OJ_DATA_DIR=/srv/oj-data
+sudo mkdir -p "$OJ_DATA_DIR"
+sudo chown "$USER" "$OJ_DATA_DIR"
 
-docker compose up -d --build
-docker compose logs -f
+# 生产密钥与数据路径只通过环境传入，不写入仓库
+export JWT_SECRET="$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")"
 
-# 首次初始化题库（容器里跑编译后的 seed）
-docker compose exec oj node dist/seed/run.js
+# 一次性容器镜像（含五种语言工具链）和服务镜像
+docker build -t oj-judge:latest -f server/docker/judge.Dockerfile server/docker
+docker compose build
+docker compose up -d
+docker compose logs -f api judge
 ```
 
-镜像内已包含 `build-essential / python3 / openjdk-17`，`server/data` 通过 volume 持久化。
+反向代理只转发到本机 `127.0.0.1:3001`，关闭 SSE buffering，并只对外开放 80/443。Compose 运行 API 与独立 worker 两个服务，使用同一 SQLite 文件；判题工作目录按宿主绝对路径 bind mount，容器与 Docker daemon 看到的源路径保持一致。API 和 worker 都挂载 Docker socket，因为自测和正式提交都必须走隔离执行器。
 
-> 说明：本机（Windows）没有安装 Docker，**Dockerfile / compose 未在本机实测**，语法按官方镜像规范编写；如果构建时 `better-sqlite3` 编译失败，确认镜像里装了 `build-essential python3`（已装）。
+生产没有公开默认管理员或默认密码。首次初始化时交互式读取账号和密码，然后在 API 镜像中运行一次性命令：
+
+```bash
+read -r -p 'Admin username: ' OJ_ADMIN_USERNAME
+read -r -s -p 'Admin password (12+ chars): ' OJ_ADMIN_PASSWORD
+printf '\n'
+export OJ_ADMIN_USERNAME OJ_ADMIN_PASSWORD
+docker compose run --rm -e OJ_ADMIN_USERNAME -e OJ_ADMIN_PASSWORD api node dist/seed/create-admin.js
+unset OJ_ADMIN_USERNAME OJ_ADMIN_PASSWORD
+```
+
+`OJ_DATA_DIR` 必须是 Linux Docker daemon 可访问的绝对路径。挂载 `/var/run/docker.sock` 会给应用进程 Docker 主机级权限；请专用部署主机，限制 shell/SSH 访问并及时更新主机和镜像。
 
 ---
 
@@ -244,13 +247,16 @@ docker compose exec oj node dist/seed/run.js
 | `PORT` | 3001 | 保持 |
 | `HOST` | 0.0.0.0 | 走 Nginx 反代时设 `127.0.0.1` |
 | `JWT_SECRET` | dev 默认值 | **必须换随机 32 字节**，否则 token 可伪造 |
+| `OJ_DEPLOYMENT_MODE` | 非生产为 `development` | 生产必填 `internal` 或 `public`；公网只允许 `JUDGE_EXECUTOR=docker` |
 | `DB_PATH` | `server/data/oj.db` | 放数据盘并纳入备份 |
 | `JUDGE_CONCURRENCY` | 2 | 按 CPU 核数，`核数/2` 左右 |
 | `JUDGE_WORKERS` | 2（兼容旧名 `JUDGE_CONCURRENCY`） | 判题 worker 并发数 |
 | `JUDGE_EXECUTOR` | `local` | 公网部署必须设 `docker`（见上文「Docker 判题执行器」） |
 | `JUDGE_DOCKER_IMAGE` | `oj-judge:latest` | Docker 执行器的判题镜像 |
+| `JUDGE_QUEUE_LIMIT` | 2000 | SQLite 队列最大任务数 |
 | `SUBMIT_COOLDOWN_SEC` | 5 | 人多了保持 5~10 |
 | `RUN_COOLDOWN_MS` | 2000 | 自测频率限制 |
+| `TRUST_PROXY` | 0 | 只在单层可信反代后设为 1 |
 | `CORS_ORIGIN` | `http://localhost:5173` | 同源部署（单端口）可不改；前后端分开部署时改成前端域名 |
 
 ---

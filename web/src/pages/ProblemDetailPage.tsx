@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import 'katex/dist/katex.min.css';
 import { api, ApiError, createStreamTicket, streamUrl } from '../api/client';
@@ -61,6 +61,10 @@ export function ProblemDetailPage() {
   const [selfResult, setSelfResult] = useState<RunResult | null>(null);
   const [selfRunning, setSelfRunning] = useState(false);
   const [selfError, setSelfError] = useState('');
+  const [paneRatio, setPaneRatio] = useState(50);
+  const [resizing, setResizing] = useState(false);
+  const [editorFullscreen, setEditorFullscreen] = useState(false);
+  const layoutRef = useRef<HTMLDivElement>(null);
   const actionsRef = useRef<{ run: () => void; submit: () => void }>({ run: () => {}, submit: () => {} });
 
   const isRunning = status === 'PENDING' || status === 'JUDGING';
@@ -156,6 +160,24 @@ export function ProblemDetailPage() {
   }, []);
 
   useEffect(() => stopStream, [stopStream]);
+
+  useEffect(() => {
+    if (!resizing) return;
+    const resize = (event: PointerEvent) => {
+      const bounds = layoutRef.current?.getBoundingClientRect();
+      if (!bounds || bounds.width === 0) return;
+      setPaneRatio(Math.max(30, Math.min(70, ((event.clientX - bounds.left) / bounds.width) * 100)));
+    };
+    const finish = () => setResizing(false);
+    window.addEventListener('pointermove', resize);
+    window.addEventListener('pointerup', finish);
+    window.addEventListener('pointercancel', finish);
+    return () => {
+      window.removeEventListener('pointermove', resize);
+      window.removeEventListener('pointerup', finish);
+      window.removeEventListener('pointercancel', finish);
+    };
+  }, [resizing]);
 
   const appliedRef = useRef<Set<number>>(new Set());
 
@@ -391,6 +413,10 @@ export function ProblemDetailPage() {
   // Ctrl/Cmd + Enter 运行，加 Shift 提交  actionsRef.current = { run: () => void runSelfTest(), submit: () => void handleSubmit() };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && editorFullscreen) {
+        setEditorFullscreen(false);
+        return;
+      }
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
         e.preventDefault();
         if (e.shiftKey) actionsRef.current.submit();
@@ -399,7 +425,7 @@ export function ProblemDetailPage() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [editorFullscreen]);
 
   const markdown = useMemo(() => {
     if (!data) return '';
@@ -441,9 +467,17 @@ export function ProblemDetailPage() {
         <span className="text-slate-500 dark:text-slate-400">{problem.title}</span>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div
+        ref={layoutRef}
+        style={{ '--problem-pane': `${paneRatio}%` } as CSSProperties}
+        className={
+          editorFullscreen
+            ? 'fixed inset-0 z-50 grid grid-cols-1 gap-3 overflow-auto bg-slate-50 p-3 dark:bg-slate-950'
+            : 'grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,var(--problem-pane))_8px_minmax(0,1fr)]'
+        }
+      >
         {/* 左：题面 */}
-        <div className="card overflow-hidden">
+        {!editorFullscreen && <div className="card min-w-0 overflow-hidden">
           <div className="border-b border-slate-200 dark:border-slate-700 px-5 py-4">
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-mono text-xs text-slate-400 dark:text-slate-500">#{String(problem.id).padStart(4, '0')}</span>
@@ -551,11 +585,34 @@ export function ProblemDetailPage() {
               </section>
             )}
           </div>
-        </div>
+        </div>}
+
+        {!editorFullscreen && (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="拖动调整题面和编辑器宽度"
+            aria-valuemin={30}
+            aria-valuemax={70}
+            aria-valuenow={Math.round(paneRatio)}
+            tabIndex={0}
+            onPointerDown={(event) => {
+              event.preventDefault();
+              setResizing(true);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'ArrowLeft') setPaneRatio((value) => Math.max(30, value - 2));
+              if (event.key === 'ArrowRight') setPaneRatio((value) => Math.min(70, value + 2));
+            }}
+            className="hidden touch-none cursor-col-resize items-center justify-center rounded hover:bg-brand-100 active:bg-brand-200 dark:hover:bg-slate-800 dark:active:bg-slate-700 lg:flex"
+          >
+            <span className="h-10 w-1 rounded-full bg-slate-300 dark:bg-slate-600" />
+          </div>
+        )}
 
         {/* 右：编辑器 + 结果 */}
-        <div className="space-y-4">
-          <div className="card p-4">
+        <div className={editorFullscreen ? 'flex min-h-0 min-w-0 flex-col gap-3' : 'min-w-0 space-y-4'}>
+          <div className={editorFullscreen ? 'card flex min-h-0 flex-1 flex-col p-3' : 'card p-4'}>
             <div className="mb-2.5 flex flex-wrap items-center gap-2">
               <select
                 className="input !w-auto !py-1.5 text-xs"
@@ -572,6 +629,14 @@ export function ProblemDetailPage() {
                 {isRunning ? '判题进行中…' : draftTip ? <span className="text-emerald-600">{draftTip}</span> : '代码会自动保存在本机浏览器'}
               </span>
               <div className="ml-auto flex items-center gap-2">
+                <button
+                  className="btn-ghost !px-2.5 !py-1.5 text-xs"
+                  onClick={() => setEditorFullscreen((value) => !value)}
+                  title={editorFullscreen ? '退出全屏 (Esc)' : '全屏编辑器'}
+                  aria-label={editorFullscreen ? '退出全屏编辑器' : '全屏编辑器'}
+                >
+                  {editorFullscreen ? '⤢' : '⛶'}
+                </button>
                 <button className="btn-ghost !px-2.5 !py-1.5 text-xs" onClick={() => void saveToDrafts()} title="把当前代码存进草稿箱">
                   存草稿
                 </button>
@@ -597,7 +662,7 @@ export function ProblemDetailPage() {
               </div>
             </div>
 
-            <CodeEditor value={code} language={language} onChange={setCode} height="430px" />
+            <CodeEditor value={code} language={language} onChange={setCode} height={editorFullscreen ? 'calc(100vh - 118px)' : '430px'} />
 
             {submitError && <p className="mt-2 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-600">{submitError}</p>}
           </div>

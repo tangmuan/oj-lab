@@ -18,13 +18,13 @@ export function Layout() {
   return (
     <div className="flex min-h-full flex-col bg-slate-50 dark:bg-slate-800/50 dark:bg-slate-950">
       <header className="sticky top-0 z-20 border-b border-slate-200 dark:border-slate-700 bg-white/85 backdrop-blur dark:border-slate-800 dark:bg-slate-900/85">
-        <div className="mx-auto flex h-14 max-w-7xl items-center gap-6 px-5">
+        <div className="mx-auto flex min-h-14 max-w-7xl flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 sm:h-14 sm:flex-nowrap sm:gap-6 sm:px-5 sm:py-0">
           <NavLink to="/" className="flex items-center gap-2">
             <span className="grid h-8 w-8 place-items-center rounded-lg bg-brand-600 text-sm font-bold text-white">OJ</span>
             <span className="text-[15px] font-semibold tracking-tight text-slate-900 dark:text-slate-100">OJ Lab</span>
           </NavLink>
 
-          <nav className="flex items-center gap-1">
+          <nav className="order-3 flex w-full items-center gap-1 overflow-x-auto pb-1 sm:order-none sm:w-auto sm:pb-0">
             {navItems.map((item) => (
               <NavLink
                 key={item.to}
@@ -101,7 +101,7 @@ export function Layout() {
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-7xl flex-1 px-5 py-6">
+      <main className="mx-auto w-full max-w-7xl flex-1 px-3 py-4 sm:px-5 sm:py-6">
         <Outlet />
       </main>
 
