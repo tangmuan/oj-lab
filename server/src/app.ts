@@ -20,6 +20,8 @@ import { queueStats } from './judge/queue';
 export function createApp() {
   const app = express();
 
+  if (config.trustProxy) app.set('trust proxy', 1);
+
   app.use(cors({ origin: config.corsOrigin, credentials: true }));
 
   // 管理端一次可能提交 60 个测试点，需要更大的包体；其余接口保持 1MB，

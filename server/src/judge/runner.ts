@@ -1,13 +1,15 @@
 import { execFile, spawn } from 'child_process';
 import fs from 'fs';
 
-export type RunStatus = 'OK' | 'TLE' | 'MLE' | 'RE' | 'OLE';
+export type RunStatus = 'OK' | 'TLE' | 'MLE' | 'RE' | 'OLE' | 'SE';
 
 export interface RunOptions {
   cwd: string;
   timeLimitMs: number;
   memoryLimitMb: number;
   outputLimitBytes?: number;
+  /** Docker applies the contestant memory limit inside the container, not to the Docker CLI. */
+  monitorMemory?: boolean;
   stdin?: string;
   env?: Record<string, string>;
 }
@@ -84,6 +86,7 @@ export function runProcess(cmd: string, args: string[], opts: RunOptions): Promi
     const child = spawn(cmd, args, {
       cwd: opts.cwd,
       windowsHide: true,
+      detached: process.platform !== 'win32',
       env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1', ...opts.env },
     });
 
@@ -106,9 +109,10 @@ export function runProcess(cmd: string, args: string[], opts: RunOptions): Promi
     });
 
     child.stderr?.on('data', (chunk: Buffer) => {
-      if (errBytes >= STDERR_LIMIT) return;
       errBytes += chunk.length;
-      errChunks.push(chunk);
+      const remaining = Math.max(0, STDERR_LIMIT - (errBytes - chunk.length));
+      if (remaining > 0) errChunks.push(chunk.subarray(0, remaining));
+      if (outBytes + errBytes > outputLimit) stop('OLE');
     });
 
     if (opts.stdin !== undefined) {
@@ -124,7 +128,7 @@ export function runProcess(cmd: string, args: string[], opts: RunOptions): Promi
     let fastSample: NodeJS.Timeout | null = null;
     let polling = false;
 
-    if (child.pid) {
+    if (child.pid && opts.monitorMemory !== false) {
       const sample = async () => {
         if (polling || !child.pid || child.exitCode !== null) return;
         polling = true;

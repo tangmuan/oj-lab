@@ -46,6 +46,9 @@ export interface CheckerParams {
 
 export interface CheckerOutcome {
   ok: boolean;
+  /** TLE/MLE/OLE or an executor failure belongs to the judging system, not the contestant. */
+  systemError: boolean;
+  systemErrorStatus?: RunStatus;
   /** 截断后的 checker stderr（含异常状态）；调用方只能把它展示在样例测试点上，隐藏测试点必须丢弃 */
   message: string | null;
 }
@@ -104,20 +107,28 @@ export function writeCheckerFiles(params: CheckerParams): void {
  */
 export function interpretCheckerResult(result: RunResult): CheckerOutcome {
   const CHECKER_STDERR_LIMIT = 400;
+  const abnormal: RunStatus[] = ['TLE', 'MLE', 'OLE', 'SE'];
+  if (abnormal.includes(result.status)) {
+    const stderr = result.stderr.trim();
+    const raw = `评测器异常（${result.status}）${stderr ? ` ${stderr}` : ''}`;
+    return {
+      ok: false,
+      systemError: true,
+      systemErrorStatus: result.status,
+      message: raw.length > CHECKER_STDERR_LIMIT ? `${raw.slice(0, CHECKER_STDERR_LIMIT)}…（已截断）` : raw,
+    };
+  }
+
   const firstLine = result.stdout.trim().split('\n')[0]?.trim().toUpperCase() ?? '';
   const verdict =
     firstLine === 'AC' ? true : firstLine === 'WA' ? false : result.status === 'OK' && result.exitCode === 0;
-
-  const abnormal: RunStatus[] = ['TLE', 'MLE', 'OLE'];
   const stderr = result.stderr.trim();
-  const raw = [abnormal.includes(result.status) ? `评测器异常（${result.status}）` : '', stderr]
-    .filter(Boolean)
-    .join(' ');
+  const raw = stderr;
   const message = raw
     ? raw.length > CHECKER_STDERR_LIMIT
       ? `${raw.slice(0, CHECKER_STDERR_LIMIT)}…（已截断）`
       : raw
     : null;
 
-  return { ok: verdict, message };
+  return { ok: verdict, systemError: false, message };
 }

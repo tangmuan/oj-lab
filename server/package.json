@@ -8,8 +8,9 @@
     "build": "tsc -p tsconfig.json && node -e \"require('fs').cpSync('src/db/schema.sql','dist/db/schema.sql')\"",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test tests/comparator.test.ts tests/languages.test.ts",
-    "seed": "tsx src/seed/run.ts"
+    "test": "node --import tsx --test tests/comparator.test.ts tests/languages.test.ts tests/regressions.test.ts",
+    "seed": "tsx src/seed/run.ts",
+    "admin:create": "tsx src/seed/create-admin.ts"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

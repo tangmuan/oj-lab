@@ -23,6 +23,9 @@ import {
 import { LANGUAGES } from './languages';
 import { runProcess, RunResult } from './runner';
 
+/** Docker daemon/container startup is infrastructure overhead, not contestant runtime. */
+const DOCKER_STARTUP_GRACE_MS = 10_000;
+
 /**
  * Docker 执行器：每次编译/运行/checker 都在一个一次性容器里完成，
  * 用 --network none --read-only --pids-limit --memory --cpus --user 做真实隔离。
@@ -43,6 +46,7 @@ export const dockerExecutor: JudgeExecutor = {
     }
 
     const dir = prepareWorkDir(params.prefix);
+    try {
     // 容器内以 nobody(uid 65534) 运行，宿主目录必须对任意 uid 可写，否则编译产物写不进去
     openPermissions(dir);
 
@@ -60,6 +64,7 @@ export const dockerExecutor: JudgeExecutor = {
         });
         if (cr.status !== 'OK') {
           // 先区分「环境坏了」和「用户代码错了」：daemon 没起、镜像缺失不能算 CE
+          if (cr.status === 'SE') throw dockerUnavailable(cr.stderr || 'Docker 容器未能完成启动');
           const envErr = dockerEnvError(cr.stderr);
           if (envErr) throw dockerUnavailable(envErr);
           return {
@@ -93,6 +98,10 @@ export const dockerExecutor: JudgeExecutor = {
     }
 
     return { ok: true, dir, language: lang, sourceFile, compileMsg: null };
+    } catch (err) {
+      removeDir(dir);
+      throw err;
+    }
   },
 
   async run(dir: string, language: LanguageId, sourceFile: string, opts: RunParams): Promise<RunResult> {
@@ -150,7 +159,7 @@ async function runInContainer(
   // 名字带上时间与随机数：并发 worker 同时跑也不会撞名
   const name = `oj-judge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   // --memory-swap 与 --memory 相同 = 禁用 swap，内存超限必然触发 OOM 而不是换页慢慢熬
-  const memMb = Math.max(64, opts.memoryLimitMb);
+  const memMb = Math.max(16, opts.memoryLimitMb);
   const args = [
     'run',
     '--rm',
@@ -180,12 +189,32 @@ async function runInContainer(
     ...argv,
   ];
 
+  const runtimeFile = path.join(dir, '.oj-runtime');
+  const startedFile = path.join(dir, '.oj-started');
+  try {
+    fs.rmSync(runtimeFile, { force: true });
+    fs.rmSync(startedFile, { force: true });
+  } catch {
+    /* the container will report an executor error if the work directory is unavailable */
+  }
+
+  const timeout = `${Math.max(1, opts.timeLimitMs) / 1000}s`;
+  const launcher = [
+    'sh',
+    '-c',
+    'limit=$1; shift; : > /box/.oj-started; start=$(date +%s%N); timeout --verbose -k 0.25s "$limit" "$@"; rc=$?; end=$(date +%s%N); printf "%s" "$(( (end-start)/1000000 ))" > /box/.oj-runtime; exit "$rc"',
+    'oj-launcher',
+    timeout,
+    ...argv,
+  ];
+
   let result: RunResult;
   try {
-    result = await runProcess('docker', args, {
+    result = await runProcess('docker', [...args, ...launcher], {
       cwd: dir,
-      timeLimitMs: opts.timeLimitMs,
+      timeLimitMs: opts.timeLimitMs + DOCKER_STARTUP_GRACE_MS,
       memoryLimitMb: memMb,
+      monitorMemory: false,
       outputLimitBytes: opts.outputLimitBytes,
       stdin: opts.stdin,
     });
@@ -195,22 +224,66 @@ async function runInContainer(
     throw dockerUnavailable(`未找到 docker 命令（${err instanceof Error ? err.message : String(err)}）`);
   }
 
+  let programTime = 0;
+  let hasRuntimeMarker = false;
+  let hasStartedMarker = false;
+  try {
+    const raw = fs.readFileSync(runtimeFile, 'utf8');
+    if (/^\d+$/.test(raw)) {
+      programTime = Number(raw);
+      hasRuntimeMarker = true;
+    }
+  } catch {
+    // A missing marker means the container did not reach or finish its launcher.
+  } finally {
+    try {
+      fs.rmSync(runtimeFile, { force: true });
+    } catch {
+      /* cleanup below still removes the complete work directory */
+    }
+    try {
+      hasStartedMarker = fs.existsSync(startedFile);
+      fs.rmSync(startedFile, { force: true });
+    } catch {
+      /* the complete work directory is removed by the executor */
+    }
+  }
+
+  const timeoutDiagnostic = /timeout: sending signal (?:TERM|KILL) to command/i.test(result.stderr);
+  if (result.exitCode === 124 || timeoutDiagnostic) result = { ...result, status: 'TLE' };
+  else if (result.status === 'RE' && result.exitCode === 137 && hasStartedMarker) result = { ...result, status: 'MLE' };
+  if (!hasStartedMarker && (result.status === 'TLE' || result.status === 'RE')) {
+    // No in-container timing marker means daemon/container startup failed to complete.
+    result = { ...result, status: 'SE', stderr: result.stderr || 'Docker 容器未能完成启动' };
+  } else if (!hasRuntimeMarker && !['OLE', 'MLE', 'SE'].includes(result.status)) {
+    result = { ...result, status: 'SE', stderr: result.stderr || 'Docker 容器未能记录程序运行结果' };
+  } else if (hasRuntimeMarker) {
+    result = { ...result, timeMs: programTime };
+  }
+
   // 超时/超内存时 runProcess 杀掉的是 docker 客户端，容器本体要显式清理，否则留孤儿容器
-  if (result.status === 'TLE' || result.status === 'MLE') {
-    bestEffortRemoveContainer(name);
+  if (result.status === 'TLE' || result.status === 'MLE' || result.status === 'OLE' || result.status === 'SE') {
+    await bestEffortRemoveContainer(name);
   }
 
   // cgroup OOM 杀进程的退出码是 137；宿主侧采样不到容器内存，MLE 只能靠它判定
   if (result.status === 'RE' && result.exitCode === 137) {
-    bestEffortRemoveContainer(name);
+    await bestEffortRemoveContainer(name);
     return { ...result, status: 'MLE' };
   }
 
-  return result;
+  if (result.status === 'RE' && !hasRuntimeMarker) {
+    await bestEffortRemoveContainer(name);
+    return { ...result, status: 'SE', memoryKb: 0 };
+  }
+
+  return { ...result, memoryKb: 0 };
 }
 
-function bestEffortRemoveContainer(name: string): void {
-  execFile('docker', ['rm', '-f', name], { windowsHide: true }, () => undefined);
+function bestEffortRemoveContainer(name: string): Promise<void> {
+  return new Promise((resolve) => {
+    execFile('docker', ['rm', '-f', name], { windowsHide: true, timeout: 5000 }, () => resolve());
+  });
 }
 
 /** 宿主目录对容器内 nobody(uid 65534) 可写 */

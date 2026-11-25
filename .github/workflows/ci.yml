@@ -26,6 +26,15 @@ jobs:
         run: npm ci
         working-directory: web
 
+      - name: 安装本地判题工具链
+        run: sudo apt-get update && sudo apt-get install -y build-essential python3 python-is-python3 openjdk-17-jdk-headless
+
+      - name: 构建隔离判题镜像
+        run: docker build -t oj-judge:test -f server/docker/judge.Dockerfile server/docker
+
+      - name: 配置真实 Docker 判题回归
+        run: echo "JUDGE_DOCKER_IMAGE=oj-judge:test" >> "$GITHUB_ENV"
+
       - name: 后端类型检查
         run: npx tsc --noEmit
         working-directory: server

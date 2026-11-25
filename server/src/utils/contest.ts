@@ -16,6 +16,49 @@ export function nowSqlUtc(): string {
   return toSqlUtc(new Date());
 }
 
+/** Public problem access shared by detail, submit, self-test, and statistics endpoints. */
+export function canViewProblem(problemId: number, role: string | undefined, now = nowSqlUtc()): boolean {
+  const row = db
+    .prepare(
+      `SELECT p.is_public, MIN(c.start_at) AS earliest_start
+       FROM problems p
+       LEFT JOIN contest_problems cp ON cp.problem_id = p.id
+       LEFT JOIN contests c ON c.id = cp.contest_id
+       WHERE p.id = ? GROUP BY p.id`
+    )
+    .get(problemId) as { is_public: number; earliest_start: string | null } | undefined;
+  if (!row) return false;
+  if (role === 'admin') return true;
+  return row.is_public === 1 && (row.earliest_start === null || row.earliest_start <= now);
+}
+
+export function canSubmitToProblem(problemId: number, role: string | undefined, now = nowSqlUtc()): boolean {
+  return canViewProblem(problemId, role, now);
+}
+
+/** SQL condition for aggregates that must omit currently frozen results for this viewer. */
+export function visibleSubmissionCondition(
+  alias: string,
+  viewerId: number | undefined,
+  role: string | undefined,
+  now = nowSqlUtc()
+): { sql: string; params: unknown[] } {
+  if (role === 'admin') return { sql: '1 = 1', params: [] };
+  const ownClause = viewerId === undefined ? '0 = 1' : `${alias}.user_id = ?`;
+  const params: unknown[] = viewerId === undefined ? [] : [viewerId];
+  params.push(now, now);
+  return {
+    sql: `(${ownClause} OR NOT EXISTS (
+      SELECT 1 FROM contest_problems cp JOIN contests c ON c.id = cp.contest_id
+      WHERE cp.problem_id = ${alias}.problem_id
+        AND c.unfrozen_at IS NULL AND c.end_at > ? AND c.frozen_minutes > 0
+        AND ? >= datetime(c.end_at, printf('-%d minutes', c.frozen_minutes))
+        AND ${alias}.created_at > datetime(c.end_at, printf('-%d minutes', c.frozen_minutes))
+    ))`,
+    params,
+  };
+}
+
 export function phaseOf(contest: Pick<ContestRow, 'start_at' | 'end_at'>, now = nowSqlUtc()): ContestPhase {
   if (now < contest.start_at) return 'upcoming';
   if (now >= contest.end_at) return 'ended';

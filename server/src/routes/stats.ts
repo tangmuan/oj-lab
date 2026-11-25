@@ -3,30 +3,41 @@ import { z } from 'zod';
 import { db } from '../db';
 import { optionalAuth } from '../middleware/auth';
 import { ah, notFound } from '../utils/errors';
-import { isSubmissionFrozen, loadFrozenWindows } from '../utils/contest';
+import { canViewProblem, isSubmissionFrozen, loadFrozenWindows, nowSqlUtc, visibleSubmissionCondition } from '../utils/contest';
 
 export const statsRouter = Router();
 
 statsRouter.get(
   '/overview',
-  ah(async (_req, res) => {
+  optionalAuth,
+  ah(async (req, res) => {
     const one = (sql: string, ...params: unknown[]) => (db.prepare(sql).get(...(params as never[])) as { c: number }).c;
+    const visible = visibleSubmissionCondition('s', req.user?.id, req.user?.role);
+    const publicProblems = (db.prepare(
+      `SELECT COUNT(*) AS c FROM problems p
+       LEFT JOIN (SELECT cp.problem_id, MIN(c.start_at) AS earliest_start
+                 FROM contest_problems cp JOIN contests c ON c.id = cp.contest_id GROUP BY cp.problem_id) cst
+         ON cst.problem_id = p.id
+       WHERE p.is_public = 1 AND (cst.earliest_start IS NULL OR cst.earliest_start <= ?)`
+    ).get(nowSqlUtc()) as { c: number }).c;
 
     res.json({
       users: one('SELECT COUNT(*) AS c FROM users'),
-      problems: one('SELECT COUNT(*) AS c FROM problems WHERE is_public = 1'),
-      submissions: one('SELECT COUNT(*) AS c FROM submissions'),
-      accepted: one("SELECT COUNT(*) AS c FROM submissions WHERE status = 'AC'"),
-      todaySubmissions: one("SELECT COUNT(*) AS c FROM submissions WHERE date(created_at) = date('now')"),
-      todayAccepted: one("SELECT COUNT(*) AS c FROM submissions WHERE status = 'AC' AND date(created_at) = date('now')"),
+      problems: publicProblems,
+      submissions: one(`SELECT COUNT(*) AS c FROM submissions s WHERE ${visible.sql}`, ...visible.params),
+      accepted: one(`SELECT COUNT(*) AS c FROM submissions s WHERE s.status = 'AC' AND ${visible.sql}`, ...visible.params),
+      todaySubmissions: one(`SELECT COUNT(*) AS c FROM submissions s WHERE date(s.created_at) = date('now') AND ${visible.sql}`, ...visible.params),
+      todayAccepted: one(`SELECT COUNT(*) AS c FROM submissions s WHERE s.status = 'AC' AND date(s.created_at) = date('now') AND ${visible.sql}`, ...visible.params),
     });
   })
 );
 
 statsRouter.get(
   '/leaderboard',
+  optionalAuth,
   ah(async (req, res) => {
     const limit = z.coerce.number().int().min(1).max(100).default(20).parse(req.query.limit ?? 20);
+    const visible = visibleSubmissionCondition('s', req.user?.id, req.user?.role);
 
     const items = db
       .prepare(
@@ -36,12 +47,12 @@ statsRouter.get(
                 SUM(CASE WHEN s.status = 'AC' THEN 1 ELSE 0 END) AS ac_count,
                 MAX(s.created_at) AS last_submit_at
          FROM users u
-         LEFT JOIN submissions s ON s.user_id = u.id
+         LEFT JOIN submissions s ON s.user_id = u.id AND ${visible.sql}
          GROUP BY u.id
          ORDER BY solved DESC, submit_count ASC, u.id ASC
          LIMIT ?`
       )
-      .all(limit) as Array<{
+      .all(...(visible.params as never[]), limit) as Array<{
       id: number;
       username: string;
       role: string;
@@ -70,9 +81,15 @@ statsRouter.get(
   optionalAuth,
   ah(async (req, res) => {
     const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0 || !canViewProblem(id, req.user?.role)) throw notFound('题目不存在');
+    const visible = visibleSubmissionCondition('s', req.user?.id, req.user?.role);
     const rows = db
-      .prepare('SELECT status, COUNT(*) AS c FROM submissions WHERE problem_id = ? GROUP BY status')
-      .all(id) as { status: string; c: number }[];
+      .prepare(`SELECT status, COUNT(*) AS c FROM submissions s WHERE s.problem_id = ? AND ${visible.sql} GROUP BY status`)
+      .all(id, ...(visible.params as never[])) as { status: string; c: number }[];
+    const hiddenCount = visible.sql === '1 = 1'
+      ? 0
+      : (db.prepare(`SELECT COUNT(*) AS c FROM submissions s WHERE s.problem_id = ? AND NOT (${visible.sql})`)
+          .get(id, ...(visible.params as never[])) as { c: number }).c;
 
     const recentRaw = db
       .prepare(
@@ -102,7 +119,8 @@ statsRouter.get(
         })
       : recentRaw;
 
-    res.json({ distribution: rows, recent });
+    const distribution = hiddenCount > 0 ? [...rows, { status: 'HIDDEN', c: hiddenCount }] : rows;
+    res.json({ distribution, recent });
   })
 );
 
@@ -122,28 +140,35 @@ statsRouter.get(
       | undefined;
     if (!user) throw notFound('用户不存在');
 
+    const viewer = req.user;
+    const isSelf = viewer?.id === id;
+    const visible = visibleSubmissionCondition('s', isSelf ? id : undefined, viewer?.role);
+
     const agg = db
       .prepare(
         `SELECT COUNT(*) AS submit_count,
-                SUM(CASE WHEN status = 'AC' THEN 1 ELSE 0 END) AS ac_count,
-                COUNT(DISTINCT CASE WHEN status = 'AC' THEN problem_id END) AS solved
-         FROM submissions WHERE user_id = ?`
+                SUM(CASE WHEN s.status = 'AC' THEN 1 ELSE 0 END) AS ac_count,
+                COUNT(DISTINCT CASE WHEN s.status = 'AC' THEN s.problem_id END) AS solved
+         FROM submissions s WHERE s.user_id = ? AND ${visible.sql}`
       )
-      .get(id) as { submit_count: number; ac_count: number | null; solved: number | null };
+      .get(id, ...(visible.params as never[])) as { submit_count: number; ac_count: number | null; solved: number | null };
 
     const distribution = db
-      .prepare('SELECT status, COUNT(*) AS c FROM submissions WHERE user_id = ? GROUP BY status ORDER BY c DESC')
-      .all(id) as { status: string; c: number }[];
+      .prepare(
+        `SELECT CASE WHEN ${visible.sql} THEN s.status ELSE 'HIDDEN' END AS status, COUNT(*) AS c
+         FROM submissions s WHERE s.user_id = ? GROUP BY status ORDER BY c DESC`
+      )
+      .all(...(visible.params as never[]), id) as { status: string; c: number }[];
 
     const calendar = db
       .prepare(
         `SELECT date(created_at) AS date, COUNT(*) AS count
-         FROM submissions
-         WHERE user_id = ? AND date(created_at) >= date('now', '-181 day')
-         GROUP BY date(created_at)
+         FROM submissions s
+         WHERE s.user_id = ? AND date(s.created_at) >= date('now', '-181 day') AND ${visible.sql}
+         GROUP BY date(s.created_at)
          ORDER BY date ASC`
       )
-      .all(id) as { date: string; count: number }[];
+      .all(id, ...(visible.params as never[])) as { date: string; count: number }[];
 
     const recentRaw = db
       .prepare(
@@ -163,9 +188,7 @@ statsRouter.get(
     }>;
 
     // 封榜期语义：看别人的主页时，封榜后提交一律打码；本人与管理员不受影响
-    const viewer = req.user;
     const windows = viewer?.role === 'admin' ? null : loadFrozenWindows(viewer?.role);
-    const isSelf = viewer?.id === id;
     const recent = windows && !isSelf
       ? recentRaw.map((r) =>
           isSubmissionFrozen(windows, r.problem_id, r.created_at) ? { ...r, status: 'HIDDEN', time_ms: 0, memory_kb: 0 } : r

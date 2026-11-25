@@ -8,6 +8,8 @@ import { isLanguageId } from '../judge/languages';
 import { requireAuth } from '../middleware/auth';
 import { ProblemRow } from '../types';
 import { ah, AppError, notFound } from '../utils/errors';
+import { canSubmitToProblem } from '../utils/contest';
+import { acquireExecutionLease, consumeRateLimit, releaseExecutionLease, renewExecutionLease } from '../utils/requestLimits';
 
 export const runRouter = Router();
 
@@ -25,9 +27,6 @@ const DEFAULT_LIMITS = { timeLimitMs: 2000, memoryLimitMb: 256 };
 /** 响应里回传的输出上限，避免一次自测把页面拖垮 */
 const RESPONSE_STDOUT_LIMIT = 64 * 1024;
 
-/** 自测运行的内存频控（不落库，进程重启即清空） */
-const lastRunAt = new Map<number, number>();
-
 runRouter.post(
   '/',
   requireAuth,
@@ -39,29 +38,27 @@ runRouter.post(
     if (problemId !== undefined) {
       const problem = db.prepare('SELECT * FROM problems WHERE id = ?').get(problemId) as ProblemRow | undefined;
       if (!problem) throw notFound('题目不存在');
-      if (problem.is_public !== 1 && user.role !== 'admin') throw notFound('题目不存在');
+      if (!canSubmitToProblem(problemId, user.role)) throw notFound('题目不存在');
       limits = { timeLimitMs: problem.time_limit_ms, memoryLimitMb: problem.memory_limit_mb };
     }
 
-    const now = Date.now();
-    const prev = lastRunAt.get(user.id) ?? 0;
-    if (now - prev < config.runCooldownMs) {
-      const wait = Math.ceil((config.runCooldownMs - (now - prev)) / 1000);
-      throw new AppError(`运行过快，请 ${wait} 秒后再试`, 429, 'TOO_MANY_REQUESTS');
-    }
-    lastRunAt.set(user.id, now);
+    const cooldown = consumeRateLimit(`run-user:${user.id}`, config.runCooldownMs, 1);
+    if (!cooldown.allowed) throw new AppError(`运行过快，请 ${cooldown.retryAfterSec} 秒后再试`, 429, 'TOO_MANY_REQUESTS');
+    const lease = acquireExecutionLease(user.id, config.judgeWorkers);
+    if (!lease) throw new AppError('当前自测任务较多，请稍后重试', 429, 'TOO_MANY_REQUESTS');
+    const leaseHeartbeat = setInterval(() => renewExecutionLease(lease), 30_000);
 
     // 自测运行与提交判题走同一个执行器，保证「自测通过、提交也通过」的行为一致
     const exec = getExecutor();
-    const built = await exec.build({
-      code,
-      language,
-      memoryLimitMb: limits.memoryLimitMb,
-      prefix: `run-${user.id}`,
-      warmup: true,
-    });
-
+    let built: Awaited<ReturnType<typeof exec.build>> | null = null;
     try {
+      built = await exec.build({
+        code,
+        language,
+        memoryLimitMb: limits.memoryLimitMb,
+        prefix: `run-${user.id}`,
+        warmup: true,
+      });
       if (!built.ok) {
         res.json({
           status: 'CE',
@@ -99,7 +96,9 @@ runRouter.post(
         truncated,
       });
     } finally {
-      exec.cleanup(built.dir);
+      if (built) exec.cleanup(built.dir);
+      clearInterval(leaseHeartbeat);
+      releaseExecutionLease(lease);
     }
   })
 );

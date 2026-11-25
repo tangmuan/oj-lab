@@ -76,12 +76,27 @@ CREATE TABLE IF NOT EXISTS submission_cases (
 
 CREATE INDEX IF NOT EXISTS idx_subcases_submission ON submission_cases(submission_id);
 
+CREATE TABLE IF NOT EXISTS rate_limit_events (
+  key_hash TEXT NOT NULL,
+  created_at_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rate_limit_events_key_time ON rate_limit_events(key_hash, created_at_ms);
+CREATE INDEX IF NOT EXISTS idx_rate_limit_events_time ON rate_limit_events(created_at_ms);
+
+CREATE TABLE IF NOT EXISTS execution_leases (
+  id TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_execution_leases_expiry ON execution_leases(expires_at_ms);
+
 -- 判题队列：跨进程持久化（API 进程入队，worker 进程轮询认领）。
 -- 行存在 = 任务待消费或已被认领；claimed_by 非空表示被某 worker 实例认领，
 -- worker 崩溃后启动时把所有认领作废即可恢复，不需要超时机制。
 CREATE TABLE IF NOT EXISTS judge_queue (
   submission_id INTEGER PRIMARY KEY REFERENCES submissions(id) ON DELETE CASCADE,
   claimed_by    TEXT,
+  claim_token   TEXT,
   claimed_at    TEXT,
   enqueued_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );

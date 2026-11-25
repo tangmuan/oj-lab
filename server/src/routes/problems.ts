@@ -4,7 +4,7 @@ import { db } from '../db';
 import { optionalAuth, requireAuth } from '../middleware/auth';
 import { ProblemRow, TestcaseRow } from '../types';
 import { ah, notFound, unauthorized } from '../utils/errors';
-import { nowSqlUtc } from '../utils/contest';
+import { canViewProblem, nowSqlUtc, visibleSubmissionCondition } from '../utils/contest';
 
 /**
  * 题目可见性规则（比赛窗口）：
@@ -17,17 +17,6 @@ import { nowSqlUtc } from '../utils/contest';
  * 由于 running/ended 都满足 start_at <= now，「全部未开始」等价于 MIN(start_at) > now；
  * 无关联比赛时 MIN 为 NULL，天然不命中隐藏条件。
  */
-function hiddenByUpcomingContest(problemId: number, now: string): boolean {
-  const row = db
-    .prepare(
-      `SELECT MIN(c.start_at) AS earliest
-       FROM contest_problems cp JOIN contests c ON c.id = cp.contest_id
-       WHERE cp.problem_id = ?`
-    )
-    .get(problemId) as { earliest: string | null };
-  return row.earliest !== null && row.earliest > now;
-}
-
 export const problemsRouter = Router();
 
 const listQuery = z.object({
@@ -65,11 +54,11 @@ function parseTags(raw: string): string[] {
  * 列表统计不再用「每行三个相关子查询」，改成三张预聚合派生表 JOIN 一次；
  * 每个派生表按 problem_id 唯一，不会像直接 JOIN 明细表那样把计数放大。
  */
-const LIST_FROM = `
+const listFrom = (visibleSubmissions: string) => `
   FROM problems p
   LEFT JOIN (
-    SELECT problem_id, COUNT(*) AS submit_count, SUM(CASE WHEN status = 'AC' THEN 1 ELSE 0 END) AS ac_count
-    FROM submissions GROUP BY problem_id
+    SELECT s.problem_id, COUNT(*) AS submit_count, SUM(CASE WHEN s.status = 'AC' THEN 1 ELSE 0 END) AS ac_count
+    FROM submissions s WHERE ${visibleSubmissions} GROUP BY s.problem_id
   ) agg ON agg.problem_id = p.id
   LEFT JOIN (
     SELECT problem_id, COUNT(*) AS case_count FROM testcases GROUP BY problem_id
@@ -109,6 +98,7 @@ problemsRouter.get(
     const where: string[] = [];
     const params: unknown[] = [];
     const now = nowSqlUtc();
+    const visible = visibleSubmissionCondition('s', req.user?.id, req.user?.role, now);
     if (!isAdmin) {
       where.push('p.is_public = 1');
       // 挂了比赛但全部未开赛的题：列表里直接过滤，不泄露标题与存在性。
@@ -154,13 +144,13 @@ problemsRouter.get(
                 COALESCE(tc.case_count, 0) AS case_count,
                 COALESCE(tagagg.tag_names, '[]') AS tag_names,
                 CASE WHEN fav.user_id IS NULL THEN 0 ELSE 1 END AS favorited
-         ${LIST_FROM}
+         ${listFrom(visible.sql)}
          ${CONTEST_AGG}
          ${whereSql}
          ORDER BY p.id ASC
          LIMIT ? OFFSET ?`
       )
-      .all(viewerId, ...(params as never[]), pageSize, (page - 1) * pageSize) as ProblemListRow[];
+      .all(...(visible.params as never[]), viewerId, ...(params as never[]), pageSize, (page - 1) * pageSize) as ProblemListRow[];
 
     // 当前用户在列表中的解题状态
     const statusMap: Record<number, { tried: boolean; solved: boolean }> = {};
@@ -197,15 +187,22 @@ problemsRouter.get(
 /** 标签云：必须放在 /:id 之前，否则 tags 会被当成题目 id */
 problemsRouter.get(
   '/tags',
+  optionalAuth,
   ah(async (_req, res) => {
     const items = db
       .prepare(
-        `SELECT tg.name, COUNT(pt.problem_id) AS count
+        `SELECT tg.name, COUNT(DISTINCT p.id) AS count
          FROM tags tg LEFT JOIN problem_tags pt ON pt.tag_id = tg.id
+         LEFT JOIN problems p ON p.id = pt.problem_id AND p.is_public = 1
+         LEFT JOIN (
+           SELECT cp.problem_id, MIN(c.start_at) AS earliest_start
+           FROM contest_problems cp JOIN contests c ON c.id = cp.contest_id GROUP BY cp.problem_id
+         ) cst ON cst.problem_id = p.id
+         WHERE p.id IS NOT NULL AND (cst.earliest_start IS NULL OR cst.earliest_start <= ?)
          GROUP BY tg.id
          ORDER BY count DESC, tg.name ASC`
       )
-      .all();
+      .all(nowSqlUtc());
     res.json({ items });
   })
 );
@@ -219,22 +216,22 @@ problemsRouter.get(
 
     const problem = db.prepare('SELECT * FROM problems WHERE id = ?').get(id) as ProblemRow | undefined;
     if (!problem) throw notFound('题目不存在');
-    if (problem.is_public !== 1 && req.user?.role !== 'admin') throw notFound('题目不存在');
+    if (!canViewProblem(id, req.user?.role)) throw notFound('题目不存在');
     // 挂了比赛且全部未开赛 → 与私有题同等对待，404 且文案一致，不泄露存在性
-    if (req.user?.role !== 'admin' && hiddenByUpcomingContest(id, nowSqlUtc())) throw notFound('题目不存在');
 
     const samples = db
       .prepare('SELECT id, input, expected_output, ord FROM testcases WHERE problem_id = ? AND is_sample = 1 ORDER BY ord ASC, id ASC')
       .all(id) as Pick<TestcaseRow, 'id' | 'input' | 'expected_output' | 'ord'>[];
 
+    const visible = visibleSubmissionCondition('s', req.user?.id, req.user?.role);
     const agg = db
       .prepare(
         `SELECT COUNT(*) AS submit_count,
-                SUM(CASE WHEN status = 'AC' THEN 1 ELSE 0 END) AS ac_count,
-                COUNT(DISTINCT CASE WHEN status = 'AC' THEN user_id END) AS solved_users
-         FROM submissions WHERE problem_id = ?`
+                SUM(CASE WHEN s.status = 'AC' THEN 1 ELSE 0 END) AS ac_count,
+                COUNT(DISTINCT CASE WHEN s.status = 'AC' THEN s.user_id END) AS solved_users
+         FROM submissions s WHERE s.problem_id = ? AND ${visible.sql}`
       )
-      .get(id) as { submit_count: number; ac_count: number; solved_users: number };
+      .get(id, ...(visible.params as never[])) as { submit_count: number; ac_count: number; solved_users: number };
 
     const tags = db
       .prepare('SELECT tg.name FROM tags tg JOIN problem_tags pt ON pt.tag_id = tg.id WHERE pt.problem_id = ? ORDER BY tg.name ASC')
@@ -286,7 +283,7 @@ problemsRouter.post(
     if (!problem) throw notFound('题目不存在');
     if (
       req.user?.role !== 'admin' &&
-      (problem.is_public !== 1 || hiddenByUpcomingContest(id, nowSqlUtc()))
+      (problem.is_public !== 1 || !canViewProblem(id, req.user?.role))
     )
       throw notFound('题目不存在');
 

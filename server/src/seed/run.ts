@@ -1,4 +1,5 @@
 import bcrypt from 'bcryptjs';
+import { config } from '../config';
 import { db, initDb, tx } from '../db';
 
 interface SeedCase {
@@ -110,6 +111,9 @@ const PROBLEMS: SeedProblem[] = [
 ];
 
 function main() {
+  if (config.isProd) {
+    throw new Error('The demo seed is development-only. Use npm run admin:create to initialize an administrator.');
+  }
   initDb();
 
   const removedSmoke = db.prepare("DELETE FROM problems WHERE title LIKE '[SMOKE]%'").run().changes;

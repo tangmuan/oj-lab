@@ -9,7 +9,8 @@ import { authenticateStream, optionalAuth, requireAuth } from '../middleware/aut
 import { ProblemRow, SubmissionCaseRow, SubmissionRow } from '../types';
 import { ah, AppError, forbidden, notFound, unauthorized } from '../utils/errors';
 import { issueStreamTicket } from '../utils/streamTickets';
-import { nowSqlUtc, isSubmissionFrozen, loadFrozenWindows } from '../utils/contest';
+import { canSubmitToProblem, canViewProblem, nowSqlUtc, isSubmissionFrozen, loadFrozenWindows } from '../utils/contest';
+import { consumeRateLimit } from '../utils/requestLimits';
 
 export const submissionsRouter = Router();
 
@@ -42,22 +43,29 @@ submissionsRouter.post(
 
     const problem = db.prepare('SELECT * FROM problems WHERE id = ?').get(problemId) as ProblemRow | undefined;
     if (!problem) throw notFound('题目不存在');
-    if (problem.is_public !== 1 && user.role !== 'admin') throw notFound('题目不存在');
+    if (!canSubmitToProblem(problemId, user.role)) throw notFound('题目不存在');
 
-    const last = db
-      .prepare("SELECT strftime('%s','now') - strftime('%s', created_at) AS age FROM submissions WHERE user_id = ? ORDER BY id DESC LIMIT 1")
-      .get(user.id) as { age: number } | undefined;
-    const cooldown = config.submitCooldownSec;
-    if (last && last.age < cooldown) {
-      throw new AppError(`提交过于频繁，请 ${cooldown - last.age} 秒后再试`, 429, 'TOO_MANY_REQUESTS');
-    }
+    const ip = req.ip || req.socket.remoteAddress || 'unknown';
+    const ipLimit = consumeRateLimit(`submit-ip:${ip}`, 10 * 60_000, 30);
+    if (!ipLimit.allowed) throw new AppError(`提交请求过多，请 ${ipLimit.retryAfterSec} 秒后再试`, 429, 'TOO_MANY_REQUESTS');
 
-    const info = db
-      .prepare('INSERT INTO submissions (user_id, problem_id, language, code, status) VALUES (?,?,?,?,?)')
-      .run(user.id, problemId, language, code, 'PENDING');
-
-    const id = Number(info.lastInsertRowid);
-    enqueueSubmission(id);
+    const id = db.transaction(() => {
+      const last = db
+        .prepare("SELECT strftime('%s','now') - strftime('%s', created_at) AS age FROM submissions WHERE user_id = ? ORDER BY id DESC LIMIT 1")
+        .get(user.id) as { age: number } | undefined;
+      const cooldown = config.submitCooldownSec;
+      if (last && last.age < cooldown) {
+        throw new AppError(`提交过于频繁，请 ${cooldown - last.age} 秒后再试`, 429, 'TOO_MANY_REQUESTS');
+      }
+      const queued = (db.prepare('SELECT COUNT(*) AS c FROM judge_queue').get() as { c: number }).c;
+      if (queued >= config.maxQueueSize) throw new AppError('判题队列已满，请稍后重试', 429, 'TOO_MANY_REQUESTS');
+      const info = db
+        .prepare('INSERT INTO submissions (user_id, problem_id, language, code, status) VALUES (?,?,?,?,?)')
+        .run(user.id, problemId, language, code, 'PENDING');
+      const submissionId = Number(info.lastInsertRowid);
+      enqueueSubmission(submissionId);
+      return submissionId;
+    })();
 
     res.status(201).json({ id, status: 'PENDING' });
   })
@@ -70,6 +78,19 @@ submissionsRouter.get(
     const q = listQuery.parse(req.query);
     const where: string[] = [];
     const params: unknown[] = [];
+
+    if (req.user?.role !== 'admin') {
+      where.push(`EXISTS (
+        SELECT 1 FROM problems vp WHERE vp.id = s.problem_id AND vp.is_public = 1
+          AND NOT EXISTS (
+            SELECT 1 FROM contest_problems cp JOIN contests c ON c.id = cp.contest_id
+            WHERE cp.problem_id = s.problem_id
+            GROUP BY cp.problem_id HAVING MIN(c.start_at) > ?
+          )
+      )`);
+      const now = nowSqlUtc();
+      params.push(now);
+    }
 
     if (q.mine === 1) {
       if (!req.user) throw new AppError('请先登录', 401, 'UNAUTHORIZED');
@@ -176,6 +197,7 @@ submissionsRouter.get(
     if (!Number.isInteger(id) || id <= 0) throw notFound('提交记录不存在');
 
     const sub = loadSubmission(id);
+    if (!canViewProblem(sub.problem_id, req.user!.role)) throw notFound('提交记录不存在');
     // 比赛进行中，别人的提交详情（代码/用例/差异）可能泄题，一律拒绝
     if (sub.user_id !== req.user!.id && req.user!.role !== 'admin') {
       const inRunningContest = db

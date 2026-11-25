@@ -32,6 +32,7 @@ export function initDb(): void {
   ensureColumn('problems', 'checker_code', 'checker_code TEXT');
   // SSE 改为跨进程轮询 submission_cases 增量后，逐点差异必须在落库时就写进行里
   ensureColumn('submission_cases', 'first_diff', 'first_diff TEXT');
+  ensureColumn('judge_queue', 'claim_token', 'claim_token TEXT');
 }
 
 /** 事务包装，判题写库时保证原子性 */

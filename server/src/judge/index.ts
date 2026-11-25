@@ -1,10 +1,10 @@
 import { db } from '../db';
 import { JudgeStatus, ProblemRow, SubmissionRow, TestcaseRow } from '../types';
 import { FirstDiff, firstDiff, isSameOutput, truncate } from './comparator';
-import { BuiltProgram } from './executor';
+import { BuiltProgram, JudgeExecutor } from './executor';
 import { getExecutor } from './executor-factory';
 import { isLanguageId, LANGUAGES } from './languages';
-import { releaseClaim, settleBatchItems } from './queue';
+import { ownsClaim, releaseClaim, settleBatchItems } from './queue';
 import { RunResult } from './runner';
 
 export interface CaseResult {
@@ -23,6 +23,43 @@ function updateSubmission(id: number, patch: Partial<SubmissionRow>): void {
   if (entries.length === 0) return;
   const setSql = entries.map(([k]) => `${k} = ?`).join(', ');
   db.prepare(`UPDATE submissions SET ${setSql} WHERE id = ?`).run(...entries.map(([, v]) => v as never), id);
+}
+
+function beginAttempt(submissionId: number, workerId: string, token: string): boolean {
+  return db.transaction(() => {
+    if (!ownsClaim(submissionId, workerId, token)) return false;
+    db.prepare('DELETE FROM submission_cases WHERE submission_id = ?').run(submissionId);
+    updateSubmission(submissionId, {
+      status: 'JUDGING',
+      time_ms: 0,
+      memory_kb: 0,
+      pass_count: 0,
+      total_count: 0,
+      compile_msg: null,
+      detail: null,
+      judged_at: null,
+    });
+    return true;
+  })();
+}
+
+function insertCaseIfOwned(submissionId: number, workerId: string, token: string, result: CaseResult): boolean {
+  return db.transaction(() => {
+    if (!ownsClaim(submissionId, workerId, token)) return false;
+    db.prepare(
+      'INSERT INTO submission_cases (submission_id, case_index, status, time_ms, memory_kb, is_sample, message, first_diff) VALUES (?,?,?,?,?,?,?,?)'
+    ).run(
+      submissionId,
+      result.caseIndex,
+      result.status,
+      result.timeMs,
+      result.memoryKb,
+      result.isSample ? 1 : 0,
+      result.message,
+      result.firstDiff ? JSON.stringify(result.firstDiff) : null
+    );
+    return true;
+  })();
 }
 
 function caseMessage(
@@ -50,6 +87,8 @@ function caseMessage(
       return '输出超出限制（> 4MB）';
     case 'RE':
       return `运行错误（退出码 ${run.exitCode ?? 'null'}）${run.stderr ? `：${truncate(run.stderr.trim().split('\n')[0], 120)}` : ''}`;
+    case 'SE':
+      return '评测器运行异常';
     default:
       return null;
   }
@@ -60,22 +99,28 @@ function caseMessage(
  * API 进程的 SSE 通过轮询这张表推给前端，跨进程也成立。
  * workerId 用于判完后释放队列认领。
  */
-export async function judgeOne(submissionId: number, workerId: string): Promise<void> {
+export async function judgeOne(
+  submissionId: number,
+  workerId: string,
+  claimToken: string,
+  exec: JudgeExecutor = getExecutor()
+): Promise<void> {
+  if (!beginAttempt(submissionId, workerId, claimToken)) return;
   const sub = db.prepare('SELECT * FROM submissions WHERE id = ?').get(submissionId) as SubmissionRow | undefined;
-  if (!sub) return;
+  if (!sub) {
+    releaseClaim(submissionId, workerId, claimToken);
+    return;
+  }
 
   const problem = db.prepare('SELECT * FROM problems WHERE id = ?').get(sub.problem_id) as ProblemRow | undefined;
   if (!problem) {
     updateSubmission(submissionId, { status: 'SE', judged_at: new Date().toISOString() });
-    finishJudging(submissionId, workerId);
+    finishJudging(submissionId, workerId, claimToken, { status: 'SE', judged_at: new Date().toISOString() });
     return;
   }
 
-  updateSubmission(submissionId, { status: 'JUDGING' });
-
   if (!LANGUAGES[sub.language]) {
-    updateSubmission(submissionId, { status: 'SE', judged_at: new Date().toISOString() });
-    finishJudging(submissionId, workerId);
+    finishJudging(submissionId, workerId, claimToken, { status: 'SE', judged_at: new Date().toISOString() });
     return;
   }
 
@@ -84,7 +129,6 @@ export async function judgeOne(submissionId: number, workerId: string): Promise<
   let maxTime = 0;
   let maxMem = 0;
   const results: CaseResult[] = [];
-  const exec = getExecutor();
   let built: BuiltProgram | null = null;
   let checker: BuiltProgram | null = null;
   const checkerCode = problem.checker_code?.trim() ?? '';
@@ -128,6 +172,7 @@ export async function judgeOne(submissionId: number, workerId: string): Promise<
       }
 
       for (let i = 0; i < cases.length && finalStatus !== 'SE'; i += 1) {
+        if (!ownsClaim(submissionId, workerId, claimToken)) return;
         const tc = cases[i];
         const run = await exec.run(built.dir, sub.language, built.sourceFile, {
           input: tc.input,
@@ -151,8 +196,9 @@ export async function judgeOne(submissionId: number, workerId: string): Promise<
             timeLimitMs: 10_000,
             memoryLimitMb: 512,
           });
-          status = verdict.ok ? 'AC' : 'WA';
-          checkerMessage = verdict.ok ? null : verdict.message;
+          status = verdict.systemError ? 'SE' : verdict.ok ? 'AC' : 'WA';
+          checkerMessage = verdict.systemError ? '评测器运行异常' : verdict.ok ? null : verdict.message;
+          if (verdict.systemError) compileMsg = `评测器运行异常（${verdict.systemErrorStatus ?? '未知错误'}）`;
         } else {
           status = isSameOutput(run.stdout, tc.expected_output) ? 'AC' : 'WA';
         }
@@ -185,18 +231,7 @@ export async function judgeOne(submissionId: number, workerId: string): Promise<
         };
         results.push(cr);
 
-        db.prepare(
-          'INSERT INTO submission_cases (submission_id, case_index, status, time_ms, memory_kb, is_sample, message, first_diff) VALUES (?,?,?,?,?,?,?,?)'
-        ).run(
-          submissionId,
-          cr.caseIndex,
-          status,
-          timeMs,
-          run.memoryKb,
-          tc.is_sample,
-          message,
-          diff ? JSON.stringify(diff) : null
-        );
+        if (!insertCaseIfOwned(submissionId, workerId, claimToken, cr)) return;
 
         if (status !== 'AC') {
           finalStatus = status;
@@ -216,7 +251,7 @@ export async function judgeOne(submissionId: number, workerId: string): Promise<
   const passCount = results.filter((r) => r.status === 'AC').length;
   const judgedAt = new Date().toISOString();
 
-  updateSubmission(submissionId, {
+  finishJudging(submissionId, workerId, claimToken, {
     status: finalStatus,
     time_ms: maxTime,
     memory_kb: maxMem,
@@ -226,15 +261,17 @@ export async function judgeOne(submissionId: number, workerId: string): Promise<
     detail: JSON.stringify(results),
     judged_at: judgedAt,
   });
-
-  finishJudging(submissionId, workerId);
 }
 
 /**
  * 判题收尾的公共动作：结算批量重判批次里属于该提交的 item（进度由剩余数推导），
  * 再释放队列认领。顺序无所谓，两件事互相独立。
  */
-function finishJudging(submissionId: number, workerId: string): void {
-  settleBatchItems(submissionId);
-  releaseClaim(submissionId, workerId);
+function finishJudging(submissionId: number, workerId: string, token: string, patch: Partial<SubmissionRow>): void {
+  db.transaction(() => {
+    if (!ownsClaim(submissionId, workerId, token)) return;
+    updateSubmission(submissionId, patch);
+    settleBatchItems(submissionId);
+    releaseClaim(submissionId, workerId, token);
+  })();
 }

@@ -1,7 +1,13 @@
-import { config } from '../config';
-import { db, initDb } from '../db';
+import { randomUUID } from 'crypto';
 import { judgeOne } from './index';
-import { claimNext, recoverQueue, resetJudgingToPending } from './queue';
+import {
+  claimHeartbeatIntervalMs,
+  claimNext,
+  heartbeatClaims,
+  recoverExpiredQueue,
+  releaseWorkerClaims,
+  retryClaim,
+} from './queue';
 
 export interface WorkerHandle {
   /** 优雅停止：不再认领新任务，等当前在判的提交跑完（不设超时，判题最长时限由题目决定） */
@@ -13,9 +19,8 @@ export interface WorkerHandle {
  * 既作为独立进程入口（npm run judge），也支持在 API 进程内联启动（零配置模式）。
  */
 export function startWorker(opts: { concurrency: number; label: string }): WorkerHandle {
-  const workerId = `${opts.label}-${process.pid}`;
-  // 恢复放这里而不是 API 启动：分离模式下 API 重启不能把活着的 worker 正在判的提交打回 PENDING
-  const requeued = recoverQueue();
+  const workerId = `${opts.label}-${process.pid}-${randomUUID()}`;
+  const requeued = recoverExpiredQueue();
   if (requeued > 0) console.log(`[judge:${workerId}] 恢复了 ${requeued} 条待判任务`);
 
   let stopped = false;
@@ -26,15 +31,19 @@ export function startWorker(opts: { concurrency: number; label: string }): Worke
   const poll = (): void => {
     if (stopped) return;
     while (running < opts.concurrency) {
-      const id = claimNext(workerId);
-      if (id === null) break;
+      const claim = claimNext(workerId);
+      if (!claim) break;
       running += 1;
       // judgeOne 开头（第一个 await 之前）同步把状态置为 JUDGING，
       // 因此 claim 与置位之间不存在被 API 再次入队的窗口
-      const p = judgeOne(id, workerId)
+      const p = judgeOne(claim.submissionId, workerId, claim.token)
         .catch((err) => {
-          console.error(`[judge:${workerId}] submission ${id} crashed`, err);
-          resetJudgingToPending();
+          console.error(`[judge:${workerId}] submission ${claim.submissionId} crashed`, err);
+          try {
+            retryClaim(claim.submissionId, workerId, claim.token);
+          } catch (retryErr) {
+            console.error(`[judge:${workerId}] could not release submission ${claim.submissionId}`, retryErr);
+          }
         })
         .finally(() => {
           running -= 1;
@@ -45,6 +54,7 @@ export function startWorker(opts: { concurrency: number; label: string }): Worke
   };
 
   const timer = setInterval(poll, 120);
+  const heartbeat = setInterval(() => heartbeatClaims(workerId), claimHeartbeatIntervalMs);
   // 先立刻跑一轮，别让第一条提交白等 120ms
   poll();
 
@@ -52,13 +62,12 @@ export function startWorker(opts: { concurrency: number; label: string }): Worke
     stop: async () => {
       stopped = true;
       clearInterval(timer);
+      clearInterval(heartbeat);
       // 等当前提交判完：判完会自己写终态并释放认领，不残留 JUDGING
       while (inflight.size > 0) {
         await Promise.allSettled([...inflight]);
       }
-      // 兜底：理论上走不到（inflight 清空后不会有 JUDGING），防御未来并发改动漏清
-      resetJudgingToPending();
-      db.prepare('UPDATE judge_queue SET claimed_by = NULL WHERE claimed_by IS NOT NULL').run();
+      releaseWorkerClaims(workerId);
     },
   };
 }
