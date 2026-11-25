@@ -36,7 +36,14 @@ export function createRejudgeBatch(ids: number[]): BatchRecord {
   };
   // 先登记再入队：worker 可能立刻开始处理并回调 any-done
   batches.set(record.id, record);
-  for (const id of ids) enqueueSubmission(id);
+  for (const id of ids) {
+    // 正在判题的提交会被 enqueueSubmission 跳过（不重复判），但进度上仍算该批次一项：
+    // 立即结算，否则 any-done 不会为它触发，批次永远到不了 100%
+    if (enqueueSubmission(id)) continue;
+    record.remaining.delete(id);
+    record.done += 1;
+    if (record.done >= record.total) record.finished = true;
+  }
   return record;
 }
 

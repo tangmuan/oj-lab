@@ -38,6 +38,8 @@ export function ContestDetailPage() {
   const [standings, setStandings] = useState<Standings | null>(null);
   const [error, setError] = useState('');
   const [now, setNow] = useState(() => Date.now());
+  /** 服务器时钟 − 本地时钟的偏移（毫秒）：本机时间不准时倒计时仍以服务端为准 */
+  const [offset, setOffset] = useState(0);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -49,7 +51,11 @@ export function ContestDetailPage() {
     const cid = Number(id);
     if (!Number.isInteger(cid)) return;
     api<ContestDetail>(`/contests/${cid}`)
-      .then(setDetail)
+      .then((r) => {
+        setDetail(r);
+        const serverMs = parseUtc(r.serverTime)?.getTime();
+        if (serverMs !== undefined) setOffset(serverMs - Date.now());
+      })
       .catch((e) => setError(e instanceof ApiError ? e.message : '加载失败'));
   }, [id]);
 
@@ -61,7 +67,11 @@ export function ContestDetailPage() {
     const load = () => {
       api<Standings>(`/contests/${cid}/standings`)
         .then((r) => {
-          if (alive) setStandings(r);
+          if (!alive) return;
+          setStandings(r);
+          // 每次轮询都重算偏移：请求往返通常 <1s，用发出时刻近似即可，长时间挂页也漂不到哪去
+          const serverMs = parseUtc(r.serverTime)?.getTime();
+          if (serverMs !== undefined) setOffset(serverMs - Date.now());
         })
         .catch(() => undefined);
     };
@@ -89,12 +99,14 @@ export function ContestDetailPage() {
   const startMs = parseUtc(c.start_at)?.getTime() ?? 0;
   const endMs = parseUtc(c.end_at)?.getTime() ?? 0;
   const meta = PHASE_META[c.phase];
+  // 倒计时用校正后的时钟：本机时间被调快/调慢也不影响与服务端一致
+  const correctedNow = now + offset;
 
   const countdown =
     c.phase === 'upcoming'
-      ? { label: '距开始', text: formatCountdown(startMs - now) }
+      ? { label: '距开始', text: formatCountdown(startMs - correctedNow) }
       : c.phase === 'running'
-        ? { label: '距结束', text: formatCountdown(endMs - now) }
+        ? { label: '距结束', text: formatCountdown(endMs - correctedNow) }
         : null;
 
   async function toggleRegister() {

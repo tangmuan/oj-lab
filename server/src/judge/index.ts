@@ -23,21 +23,31 @@ export interface CaseResult {
 
 const queue: number[] = [];
 let running = 0;
+/** 正在判题的提交 id：queue.includes 只防「排队重复」，防不住「判到一半又被批量重判」的重复入队 */
+const runningIds = new Set<number>();
 
-export function enqueueSubmission(id: number): void {
+/**
+ * 返回是否真正入队。同一 id 正在判题时返回 false（跳过），
+ * 调用方（批量重判）需要据此把该 id 从批次里结算掉，否则批次永远到不了 100%。
+ */
+export function enqueueSubmission(id: number): boolean {
+  if (runningIds.has(id)) return false;
   if (!queue.includes(id)) queue.push(id);
   pump();
+  return true;
 }
 
 function pump(): void {
   while (running < config.judgeConcurrency && queue.length > 0) {
     const id = queue.shift()!;
     running += 1;
+    runningIds.add(id);
     judgeOne(id)
       .catch((err) => {
         console.error(`[judge] submission ${id} crashed`, err);
       })
       .finally(() => {
+        runningIds.delete(id);
         running -= 1;
         pump();
       });

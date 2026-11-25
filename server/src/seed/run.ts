@@ -199,10 +199,18 @@ function main() {
       accountResults.push({ username: account.username, role: account.role, created: !exists });
     }
 
-    // 已有部署可能只有 demo：补一个管理员，避免升级后仍然进不了后台
+    // 已有部署可能只有 demo：上面的循环只会「不存在才创建」，救不了「admin 用户名被普通账号占用」的库，
+    // 这里把该账号提权，保证升级后一定有管理员入口；已是管理员则无操作（幂等）
+    const adminRow = db.prepare("SELECT id, role FROM users WHERE username = 'admin'").get() as
+      | { id: number; role: string }
+      | undefined;
+    const promoted = !!adminRow && adminRow.role !== 'admin';
+    if (promoted) {
+      db.prepare("UPDATE users SET role = 'admin' WHERE id = ?").run(adminRow!.id);
+    }
     const adminCount = (db.prepare("SELECT COUNT(*) AS c FROM users WHERE role = 'admin'").get() as { c: number }).c;
 
-    return { created, updated, accountResults, adminCount };
+    return { created, updated, accountResults, adminCount, promoted };
   });
 
   console.log(`[seed] 清理冒烟题目：${removedSmoke} 条`);
@@ -210,6 +218,7 @@ function main() {
   for (const a of result.accountResults) {
     console.log(`[seed] 账号 ${a.username}（${a.role}）：${a.created ? '已创建' : '已存在，未改动'}`);
   }
+  if (result.promoted) console.log('[seed] 已将 admin 提升为管理员');
   console.log(`[seed] 管理员账号总数：${result.adminCount}`);
   const count = (db.prepare('SELECT COUNT(*) AS c FROM problems').get() as { c: number }).c;
   console.log(`[seed] 当前题库总量：${count} 道`);

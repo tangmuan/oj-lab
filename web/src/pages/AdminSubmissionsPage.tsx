@@ -36,8 +36,22 @@ export function AdminSubmissionsPage() {
   const [batchError, setBatchError] = useState('');
   const [starting, setStarting] = useState(false);
   const esRef = useRef<EventSource | null>(null);
+  const pollRef = useRef<number | null>(null);
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current !== null) {
+      window.clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
 
   useEffect(() => () => esRef.current?.close(), []);
+  useEffect(
+    () => () => {
+      stopPolling();
+    },
+    [stopPolling]
+  );
 
   const load = useCallback(async () => {
     const qs = new URLSearchParams({ page: String(page), pageSize: '20' });
@@ -57,6 +71,31 @@ export function AdminSubmissionsPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  /** SSE 断线后的兜底：轮询批次状态接口直到 finished，保证进度条不会停在半路 */
+  const startPolling = useCallback(
+    (batchId: string) => {
+      stopPolling();
+      pollRef.current = window.setInterval(() => {
+        api<{ batchId: string; total: number; done: number; finished: boolean }>(
+          `/admin/submissions/rejudge-batch/${batchId}`
+        )
+          .then((r) => {
+            setBatch({ id: batchId, total: r.total, done: r.done, finished: r.finished });
+            if (r.finished) {
+              stopPolling();
+              void load();
+            }
+          })
+          .catch(() => {
+            // 批次不存在或已过期（如服务重启清空了内存记录）：停表并提示，避免无限轮询
+            stopPolling();
+            setBatchError('进度查询失败：批次可能已过期，请刷新列表确认结果');
+          });
+      }, 1500);
+    },
+    [load, stopPolling]
+  );
 
   async function rejudge(id: number) {
     setRejudging(id);
@@ -90,19 +129,22 @@ export function AdminSubmissionsPage() {
         setBatchError('没有符合条件的提交');
         return;
       }
-      setBatch({ id: r.batchId, total: r.total, done: 0, finished: r.total === 0 });
+      // narrowing 不跨闭包保留，先落成非空变量再给 onerror 用
+      const batchId: string = r.batchId;
+      setBatch({ id: batchId, total: r.total, done: 0, finished: r.total === 0 });
 
-      const t = await api<{ ticket: string }>(`/admin/submissions/rejudge-batch/${r.batchId}/ticket`, { method: 'POST' });
-      const es = new EventSource(`/api/streams/batch/${r.batchId}?ticket=${encodeURIComponent(t.ticket)}`);
+      const t = await api<{ ticket: string }>(`/admin/submissions/rejudge-batch/${batchId}/ticket`, { method: 'POST' });
+      const es = new EventSource(`/api/streams/batch/${batchId}?ticket=${encodeURIComponent(t.ticket)}`);
       esRef.current = es;
 
       es.onmessage = (ev) => {
         const msg = JSON.parse(ev.data) as { type: string; done: number; total: number; finished: boolean };
         if (msg.type !== 'progress') return;
-        setBatch({ id: r.batchId as string, total: msg.total, done: msg.done, finished: msg.finished });
+        setBatch({ id: batchId, total: msg.total, done: msg.done, finished: msg.finished });
         if (msg.finished) {
           es.close();
           esRef.current = null;
+          stopPolling();
           void load();
         }
       };
@@ -110,6 +152,7 @@ export function AdminSubmissionsPage() {
       es.onerror = () => {
         es.close();
         esRef.current = null;
+        startPolling(batchId);
       };
     } catch (e) {
       setBatchError(e instanceof ApiError ? e.message : '批量重判失败');

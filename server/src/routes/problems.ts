@@ -279,8 +279,16 @@ problemsRouter.post(
   ah(async (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) throw notFound('题目不存在');
-    const exists = db.prepare('SELECT id FROM problems WHERE id = ?').get(id);
-    if (!exists) throw notFound('题目不存在');
+    // 与 GET /:id 同一套可见性：私有题 / 全部关联比赛未开赛的题不可收藏，404 不泄露存在性
+    const problem = db.prepare('SELECT is_public FROM problems WHERE id = ?').get(id) as
+      | Pick<ProblemRow, 'is_public'>
+      | undefined;
+    if (!problem) throw notFound('题目不存在');
+    if (
+      req.user?.role !== 'admin' &&
+      (problem.is_public !== 1 || hiddenByUpcomingContest(id, nowSqlUtc()))
+    )
+      throw notFound('题目不存在');
 
     db.prepare('INSERT OR IGNORE INTO favorites (user_id, problem_id) VALUES (?, ?)').run(req.user!.id, id);
     res.json({ favorited: true });
