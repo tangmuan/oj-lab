@@ -14,5 +14,9 @@
     "test:unit": "npm --prefix server test && npm --prefix web test",
     "test:judge": "npm --prefix server exec -- node scripts/smoke.mjs",
     "test:ui": "npm --prefix web exec -- node scripts/ui-check.mjs"
+  },
+  "dependencies": {
+    "dompurify": "^3.5.0",
+    "katex": "^0.19.1"
   }
 }

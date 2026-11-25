@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { marked } from 'marked';
+import 'katex/dist/katex.min.css';
 import { api, ApiError, createStreamTicket, streamUrl } from '../api/client';
 import type {
   CaseResult,
@@ -20,6 +20,7 @@ import { SelfTestPanel } from '../components/SelfTestPanel';
 import { useAuth } from '../context/AuthContext';
 import { DIFFICULTY_META, formatDateTime, formatMemory, formatTimeLimit, STATUS_META } from '../lib/format';
 import { TEMPLATES } from '../lib/templates';
+import { renderMarkdown } from '../lib/markdown';
 
 function codeKey(problemId: number, language: LanguageId) {
   return `oj_code_${problemId}_${language}`;
@@ -402,7 +403,15 @@ export function ProblemDetailPage() {
 
   const markdown = useMemo(() => {
     if (!data) return '';
-    return marked.parse(data.problem.description || '_暂无题面描述_', { async: false }) as string;
+    return renderMarkdown(data.problem.description || '_暂无题面描述_');
+  }, [data]);
+  const sections = useMemo(() => {
+    if (!data) return { input: '', output: '', hint: '' };
+    return {
+      input: renderMarkdown(data.problem.input_format),
+      output: renderMarkdown(data.problem.output_format),
+      hint: renderMarkdown(data.problem.hint),
+    };
   }, [data]);
 
   if (error) {
@@ -501,13 +510,13 @@ export function ProblemDetailPage() {
             {problem.input_format && (
               <section className="mt-5">
                 <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">输入格式</h3>
-                <div className="prose-oj mt-1" dangerouslySetInnerHTML={{ __html: marked.parse(problem.input_format, { async: false }) as string }} />
+                <div className="prose-oj mt-1" dangerouslySetInnerHTML={{ __html: sections.input }} />
               </section>
             )}
             {problem.output_format && (
               <section className="mt-4">
                 <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">输出格式</h3>
-                <div className="prose-oj mt-1" dangerouslySetInnerHTML={{ __html: marked.parse(problem.output_format, { async: false }) as string }} />
+                <div className="prose-oj mt-1" dangerouslySetInnerHTML={{ __html: sections.output }} />
               </section>
             )}
 
@@ -538,7 +547,7 @@ export function ProblemDetailPage() {
             {problem.hint && (
               <section className="mt-5 rounded-lg bg-amber-50/70 px-3.5 py-3">
                 <h3 className="mb-1 text-sm font-semibold text-amber-800">提示</h3>
-                <div className="prose-oj !text-[13px] !text-amber-900/80" dangerouslySetInnerHTML={{ __html: marked.parse(problem.hint, { async: false }) as string }} />
+                <div className="prose-oj !text-[13px] !text-amber-900/80" dangerouslySetInnerHTML={{ __html: sections.hint }} />
               </section>
             )}
           </div>
