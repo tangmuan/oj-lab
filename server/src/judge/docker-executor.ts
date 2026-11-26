@@ -186,7 +186,8 @@ async function runInContainer(
     '-w',
     '/box',
     config.judgeDockerImage,
-    ...argv,
+    // argv 只能由下面的 launcher 传一次：这里再拼一次会让容器的命令变成
+    // `g++ -O2 ... -o main main.cpp sh -c ... 20s g++ ...`，g++ 收到多个源文件直接报错
   ];
 
   const runtimeFile = path.join(dir, '.oj-runtime');
