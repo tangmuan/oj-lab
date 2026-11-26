@@ -50,8 +50,8 @@ jobs:
           npm test > ../server-test.log 2>&1
           status=$?
           if [ "$status" -ne 0 ]; then
-            summary=$(grep -E 'not ok|AssertionError|ERR_ASSERTION|expected:|actual:|^# fail' ../server-test.log | head -8 | tr '\n' ' ' | tr -s ' ' | sed 's/%/%25/g' | cut -c1-600)
-            echo "::error title=server-tests::${summary}"
+            detail=$(awk '/^ *not ok/{f=1} f' ../server-test.log | head -45 | tr '\n' ' ' | tr -s ' ' | sed 's/%/%25/g' | cut -c1-1200)
+            echo "::error title=server-tests::${detail}"
             echo "===== tail of server tests ====="
             tail -80 ../server-test.log
           else
