@@ -469,7 +469,9 @@ test('OJ security, judging, queue, and contest regressions', async (t) => {
     }
 
     const memory = await dockerExecutor.build({
-      code: '#include <cstdlib>\nint main(){char* p=(char*)std::malloc(256*1024*1024);if(!p)return 2;for(int i=0;i<256*1024*1024;i+=4096)p[i]=1;return 0;}\n',
+      // volatile 写保证这些页真的被触碰：否则 -O2 会把整段当死代码删掉，
+      // 程序瞬间退出 0，MLE 用例就变成了假绿
+      code: '#include <cstdlib>\nint main(){const unsigned long long n=256ull*1024*1024;volatile char* p=(volatile char*)std::malloc(n);if(!p)return 2;for(unsigned long long i=0;i<n;i+=4096)p[i]=1;return 0;}\n',
       language: 'cpp',
       memoryLimitMb: 64,
       prefix: 'docker-mle',
