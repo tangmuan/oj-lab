@@ -263,8 +263,12 @@ test('OJ security, judging, queue, and contest regressions', async (t) => {
     const freezeAt = freezeMoment(contest);
     const boundaryWindows = new Map([[visibleProblem, freezeAt]]);
     const { isSubmissionFrozen } = await import('../src/utils/contest');
+    // 边界必须用绝对时间算：字符串截秒再拼 "01" 只在当前秒恰为 00 时才晚于封榜时刻，
+    // 否则会构造出一个更早的时间，导致断言随机失败（CI 上就是这么红的）
+    const freezeMs = new Date(`${freezeAt.replace(' ', 'T')}Z`).getTime();
     assert.equal(isSubmissionFrozen(boundaryWindows, visibleProblem, freezeAt), false);
-    assert.equal(isSubmissionFrozen(boundaryWindows, visibleProblem, `${freezeAt.slice(0, -2)}01`), true);
+    assert.equal(isSubmissionFrozen(boundaryWindows, visibleProblem, toSqlUtc(new Date(freezeMs + 1000))), true);
+    assert.equal(isSubmissionFrozen(boundaryWindows, visibleProblem, toSqlUtc(new Date(freezeMs - 1000))), false);
     assert.equal(isFrozenForViewer(contest, 'user', contest.end_at), false);
 
     db.prepare('UPDATE contests SET unfrozen_at = ? WHERE id = ?').run(toSqlUtc(new Date()), freezeContestId);
