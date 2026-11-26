@@ -162,6 +162,9 @@ async function runInContainer(
   const memMb = Math.max(16, opts.memoryLimitMb);
   const args = [
     'run',
+    // -i 必须显式加：不加时 docker 不会把 CLI 的 stdin 接进容器，
+    // 选手程序拿到的永远是 EOF，读入类题目全部会算错
+    '-i',
     '--rm',
     '--name',
     name,
